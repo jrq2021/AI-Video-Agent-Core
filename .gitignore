@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+*.egg
+.venv/
+venv/
+env/
+*.log
+
+# Node / Vite
+node_modules/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ffmpeg binaries
+backend/ffmpeg.exe
+backend/ffplay.exe
+backend/ffprobe.exe
+*.exe
+
+# Environment
+.env
+*.env.local
+
+# Downloads (large media files)
+backend/downloads/
+backend/data/
+downloads/
+backend/douyin_cookies.txt
+backend/cookies.txt
+cookies.txt
+
+# Logs
+logs/
+*.log
+
+# temp
+*.tmp
+temp/
+
+# Python virtual env (if outside project root)
+.venv/
