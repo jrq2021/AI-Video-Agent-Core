@@ -649,6 +649,32 @@ def transcribe_audio(audio_path: str, max_chars: int = 8000) -> Optional[str]:
     return None
 
 
+def parse_video(url: str) -> dict:
+    """
+    纯解析：提取视频元数据 + 字幕（含 ASR 兜底）。
+    不调用任何大模型，只返回结构化数据。
+
+    返回 {"title": str, "subtitles": str}
+    """
+    data = extract_video_data(url)
+    subtitle_text = data.get("subtitle_text", "")
+
+    if not subtitle_text or len(subtitle_text.strip()) < 20:
+        # 无字幕 → 下载音频走 Whisper ASR
+        audio_path = download_audio(url)
+        if audio_path:
+            subtitle_text = transcribe_audio(audio_path) or ""
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
+
+    return {
+        "title": data.get("title", ""),
+        "subtitles": subtitle_text or "",
+    }
+
+
 def summarize_video(url: str, api_key: Optional[str] = None) -> Generator[dict, None, None]:
     """
     一站式：提取元数据+字幕 → (无字幕则ASR) → 组装提示词 → AI 总结 → SSE 流式输出
@@ -686,20 +712,23 @@ def summarize_video(url: str, api_key: Optional[str] = None) -> Generator[dict, 
             pass
 
         if not subtitle_text or len(subtitle_text.strip()) < 20:
+            subtitle_text = "（注：当前视频无可用字幕或识别不到语音，请仅根据上述提供的标题和简介，推测并总结视频可能的核心内容。）"
             yield {
                 "status": "extracted",
-                "message": "未提取到有效语音，将直接根据视频标题和简介进行智能总结..."
+                "message": "未提取到有效语音，将直接根据视频标题和简介进行智能总结...",
+                "subtitles": ""  # 🔴 新增：确保前端状态被清空或更新
             }
-            subtitle_text = "（注：当前视频无可用字幕或识别不到语音，请仅根据上述提供的标题和简介，推测并总结视频可能的核心内容。）"
-
-        yield {
-            "status": "extracted",
-            "message": f"语音识别完成（{len(subtitle_text)} 字符），正在生成 AI 总结..."
-        }
+        else:
+            yield {
+                "status": "extracted",
+                "message": f"语音识别完成（{len(subtitle_text)} 字符），正在生成 AI 总结...",
+                "subtitles": subtitle_text  # 🔴 新增：将 Whisper 识别的字幕传给前端
+            }
     else:
         yield {
             "status": "extracted",
-            "message": f"字幕提取完成（{len(subtitle_text)} 字符），正在生成 AI 总结..."
+            "message": f"字幕提取完成（{len(subtitle_text)} 字符），正在生成 AI 总结...",
+            "subtitles": subtitle_text  # 🔴 新增：将官方提取的字幕传给前端
         }
 
     # 阶段3：组装元数据 + 字幕 → 完整 Prompt
@@ -716,3 +745,113 @@ def summarize_video(url: str, api_key: Optional[str] = None) -> Generator[dict, 
         yield {"status": "streaming", "content": text_chunk}
 
     yield {"status": "done", "message": "总结完成"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 思维导图生成
+# ═══════════════════════════════════════════════════════════════════
+
+MINDMAP_PROMPT = """你是一个专业的知识结构提取助手。请根据以下视频字幕/总结内容，提炼出该视频的逻辑结构，并以 Markdown 多级列表格式输出。
+
+{context}
+
+## 严格输出规则（必须逐条遵守）
+1. 第一行必须是 `# <视频核心主题>`（用 5-15 字概括）。
+2. 用 `##` 表示一级分类（3-6 个），`-` 表示具体要点。
+3. 子要点用 4 个空格缩进的 `-`，形成 `##` → `-` → `    -` 三级结构。
+4. **绝对禁止**输出任何解释、前言、客套话、代码块标记（\`\`\`）、HTML 标签。
+5. **绝对禁止**输出"以下是..."、"根据内容..."等引导语。直接从 `#` 开始。
+6. 每个要点 ≤ 25 字，一行一句。
+7. 如果内容不足以提炼，至少输出 1 个 `#` 标题 + 2 个 `##` 分类。
+
+## 输出示例（严格遵守此格式）
+# 机器学习的核心概念
+## 监督学习
+- 线性回归
+    - 最小二乘法
+    - 梯度下降优化
+- 决策树
+    - 信息增益
+    - 剪枝策略
+## 无监督学习
+- K-Means 聚类
+- PCA 降维
+## 深度学习
+- 神经网络基础
+    - 激活函数
+    - 反向传播
+- CNN 卷积网络
+- Transformer 架构
+## 模型评估
+- 交叉验证
+- 过拟合与欠拟合
+"""
+
+
+def generate_mindmap(
+    subtitle_text: str,
+    title: str = "",
+    api_key: Optional[str] = None,
+) -> str:
+    """
+    根据字幕/总结文本，调用 DeepSeek 生成 Markdown 思维导图。
+    返回纯 Markdown 多级列表字符串。
+    """
+    # 组装上下文
+    context_parts = []
+    if title:
+        context_parts.append(f"视频标题：{title}")
+    context_parts.append(f"视频内容：\n{subtitle_text}")
+    context = "\n\n".join(context_parts)
+
+    prompt = MINDMAP_PROMPT.format(context=context)
+
+    key = api_key or DEEPSEEK_API_KEY
+    if not key:
+        return (
+            "# 配置错误\n"
+            "## 原因\n"
+            "- 未设置 DEEPSEEK_API_KEY 环境变量\n"
+            "## 解决方法\n"
+            "- 在终端中设置 `$env:DEEPSEEK_API_KEY='your-key'`"
+        )
+
+    try:
+        client = OpenAI(api_key=key, base_url=DEEPSEEK_BASE_URL)
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "你是一个知识结构提取器。你只输出 Markdown 多级列表（# ## -），绝不输出任何解释、代码块标记或引导语。",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=2000,
+        )
+
+        result = response.choices[0].message.content or ""
+
+        # 清理可能的代码块标记
+        result = result.strip()
+        if result.startswith("```"):
+            lines = result.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            result = "\n".join(lines).strip()
+
+        # 如果 LLM 仍然输出了引导语，尝试裁剪到第一个 # 开始
+        if not result.startswith("#"):
+            import re
+            match = re.search(r"^#", result, re.MULTILINE)
+            if match:
+                result = result[match.start():]
+
+        return result or "# 生成结果为空\n## 请重试\n- 视频内容可能不足以提炼结构"
+
+    except Exception as e:
+        logger.error(f"思维导图生成失败: {e}")
+        return f"# 生成失败\n## 错误信息\n- {str(e)}"

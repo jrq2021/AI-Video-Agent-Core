@@ -49,7 +49,6 @@ export default function App() {
   const handleAnalyze = async (url) => {
     setIsLoading(true);
     setError("");
-    setVideoData(null);
     try {
       const res = await fetch("/api/info", {
         method: "POST",
@@ -60,9 +59,11 @@ export default function App() {
       if (data.success) {
         setVideoData(data.data);
       } else {
+        setVideoData(null);
         setError(data.detail || "获取视频信息失败");
       }
     } catch (e) {
+      setVideoData(null);
       setError("网络错误，请检查后端是否运行");
     } finally {
       setIsLoading(false);

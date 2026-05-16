@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import useVideoSync from "../hooks/useVideoSync";
+import MindMapView from "./MindMapView";
 
 /* ── 工具 ────────────────────────────────────────────────────────── */
 function formatTime(s) {
@@ -83,6 +84,21 @@ const Icon = {
       />
     </svg>
   ),
+  mindmap: (
+    <svg
+      className="w-4 h-4 inline"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.5}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M9.348 14.652a3.75 3.75 0 010-5.304m5.304 0a3.75 3.75 0 010 5.304m-7.425 2.121a6.75 6.75 0 010-9.546m9.546 0a6.75 6.75 0 010 9.546M5.106 18.894c-3.808-3.807-3.808-9.98 0-13.788m13.788 0c3.808 3.807 3.808 9.98 0 13.788M12 12h.008v.008H12V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"
+      />
+    </svg>
+  ),
 };
 
 /* ── Tab 组件 ───────────────────────────────────────────────────── */
@@ -121,6 +137,13 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
   const bvid = extractBvid(originalUrl);
   const isBili = isBilibiliUrl(originalUrl);
 
+  // ── 全局共享：视频基础数据（一次解析，多处复用）──
+  const [videoData, setVideoData] = useState(null); // { title, subtitles }
+  const [parseState, setParseState] = useState("idle"); // idle|loading|done|error
+  const [parseMessage, setParseMessage] = useState("");
+  const parsePromiseRef = useRef(null);
+  const subtitlesCacheRef = useRef("");  // 解决异步闭包中 stale state 问题
+
   // ── 字幕/转录状态 ──
   const [state, setState] = useState("idle"); // idle|loading|done|error
   const [message, setMessage] = useState("");
@@ -135,6 +158,10 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
   const [summaryMessage, setSummaryMessage] = useState("");
   const [summaryText, setSummaryText] = useState("");
   const [summaryError, setSummaryError] = useState("");
+  const [extractedSubtitles, setExtractedSubtitles] = useState("");
+  const [mindmapData, setMindmapData] = useState("");
+  const [mindmapState, setMindmapState] = useState("idle"); // idle|loading|done|error
+  const [mindmapError, setMindmapError] = useState("");
 
   // ── 画中画 ──
   const [isPiP, setIsPiP] = useState(false);
@@ -146,6 +173,68 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
   const listRef = useRef(null);
   const itemRefs = useRef({});
   const abortRef = useRef(null);
+
+  /* ──── 更换视频 URL → 清空所有缓存 ──── */
+  useEffect(() => {
+    setVideoData(null);
+    setParseState("idle");
+    setParseMessage("");
+    parsePromiseRef.current = null;
+    subtitlesCacheRef.current = "";
+    setState("idle");
+    setSegments([]);
+    setExtractedSubtitles("");
+    setError("");
+    setSummaryState("idle");
+    setSummaryText("");
+    setSummaryError("");
+    setMindmapState("idle");
+    setMindmapData("");
+    setMindmapError("");
+  }, [originalUrl]);
+
+  /* ──── 核心保障函数：确保视频字幕已解析并缓存 ──── */
+  const ensureVideoData = useCallback(async () => {
+    // 命中缓存
+    if (videoData?.subtitles) return;
+
+    // 已有请求在进行中 → 等待同一个 Promise
+    if (parsePromiseRef.current) {
+      await parsePromiseRef.current;
+      return;
+    }
+
+    // 发起新请求
+    parsePromiseRef.current = (async () => {
+      setParseState("loading");
+      setParseMessage("正在解析视频与提取字幕...");
+      try {
+        const res = await fetch("/api/video/parse", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: originalUrl }),
+        });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.detail || "解析失败");
+
+        setVideoData({
+          title: json.data.title,
+          subtitles: json.data.subtitles,
+        });
+        setExtractedSubtitles(json.data.subtitles);
+        subtitlesCacheRef.current = json.data.subtitles;
+        setParseState("done");
+      } catch (err) {
+        setParseState("error");
+        setParseMessage(err.message);
+        throw err;
+      } finally {
+        parsePromiseRef.current = null;
+      }
+    })();
+
+    await parsePromiseRef.current;
+  }, [videoData, originalUrl]);
 
   // ── 双向同步 Hook ──
   const sync = useVideoSync(segments);
@@ -223,12 +312,13 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
     });
   }, [sync.activeIndex]);
 
-  /* ──── 转录 API ──── */
-  const handleTranscribe = useCallback(() => {
+  /* ──── 提取字幕（SSE 获取带时间戳的结构化数据，同时更新共享缓存）──── */
+  const handleExtractSubtitles = useCallback(() => {
     if (!originalUrl) return;
     setState("loading");
     setSegments([]);
     setError("");
+    setMessage("正在提取字幕...");
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
@@ -262,25 +352,45 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
                   switch (d.status) {
                     case "checking":
                     case "downloading_audio":
-                    case "transcribing":
+                    case "transcribing": {
                       setMessage(d.message);
                       break;
-                    case "found_existing":
+                    }
+                    case "found_existing": {
                       setSegments(d.segments);
                       setLanguage(d.language || "");
                       setState("done");
+                      // 同步到共享缓存
+                      const cachedPlain = d.segments
+                        .map((s) => s.text)
+                        .join(" ");
+                      setExtractedSubtitles(cachedPlain);
+                      subtitlesCacheRef.current = cachedPlain;
+                      setVideoData({ title: "", subtitles: cachedPlain });
+                      setParseState("done");
                       break;
-                    case "done":
+                    }
+                    case "done": {
                       setSegments(d.segments);
                       setLanguage(d.language || "");
                       setMessage("");
                       setState("done");
+                      setActiveTab("subtitles");
+                      // 同步到共享缓存（供总结/导图复用）
+                      const plainText =
+                        d.segments?.map((s) => s.text).join(" ") || "";
+                      setExtractedSubtitles(plainText);
+                      subtitlesCacheRef.current = plainText;
+                      setVideoData({ title: "", subtitles: plainText });
+                      setParseState("done");
                       break;
-                    case "error":
+                    }
+                    case "error": {
                       setState("error");
                       setError(d.message);
                       console.error("[字幕]", d.message);
                       break;
+                    }
                   }
                 } catch {}
               }
@@ -298,79 +408,25 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
       });
   }, [originalUrl, prompt]);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
-
-  /* ──── 转录完成后自动触发总结 ──── */
-  useEffect(() => {
-    if (state !== "done" || segments.length === 0) return;
-    if (summaryState !== "idle") return; // 只在未总结时自动触发
-    setSummaryState("summarizing");
-    setSummaryMessage("字幕提取完成，AI 正在分析...");
-    const text = segments.map((s) => s.text).join(" ");
-    const ctrl = new AbortController();
-    fetch("/api/summarize/text", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: ctrl.signal,
-    })
-      .then((res) => {
-        const reader = res.body.getReader();
-        const dec = new TextDecoder();
-        let buf = "";
-        function read() {
-          reader
-            .read()
-            .then(({ done, value }) => {
-              if (done) {
-                setSummaryState("done");
-                return;
-              }
-              buf += dec.decode(value, { stream: true });
-              for (const line of buf.split("\n")) {
-                if (!line.startsWith("data: ")) continue;
-                buf = "";
-                try {
-                  const d = JSON.parse(line.slice(6));
-                  if (d.status === "streaming")
-                    setSummaryText((p) => p + d.content);
-                  else if (d.status === "done") setSummaryState("done");
-                  else if (d.status === "error") {
-                    setSummaryState("error");
-                    setSummaryError(d.message);
-                  }
-                } catch {}
-              }
-              read();
-            })
-            .catch(() => {});
-        }
-        read();
-      })
-      .catch((err) => {
-        if (err.name !== "AbortError") {
-          setSummaryState("error");
-          setSummaryError(`网络错误: ${err.message}`);
-        }
-      });
-  }, [state, segments, summaryState]);
-
-  /* ──── AI 总结 API（手动触发，使用已提取的字幕文本）─── */
-  const handleSummarize = useCallback(() => {
-    if (segments.length === 0) {
-      setActiveTab("subtitles");
-      return;
+  /* ──── AI 总结（复用 ensureVideoData 缓存）──── */
+  const handleSummarize = useCallback(async () => {
+    if (!originalUrl) return;
+    try {
+      await ensureVideoData();
+    } catch {
+      return; // parseState 已标记 error，UI 会展示
     }
+    // videoData 已就绪（通过 ref 避免 stale closure）
+    const subtitles = videoData?.subtitles || subtitlesCacheRef.current;
+    const title = videoData?.title || "";
     setSummaryState("summarizing");
     setSummaryText("");
     setSummaryError("");
-    const text = segments.map((s) => s.text).join(" ");
-
     const ctrl = new AbortController();
-    fetch("/api/summarize/text", {
+    fetch("/api/video/summarize-text", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ subtitles, title }),
       signal: ctrl.signal,
     })
       .then((res) => {
@@ -412,7 +468,45 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
           setSummaryError(`网络错误: ${err.message}`);
         }
       });
-  }, [segments]);
+  }, [originalUrl, ensureVideoData, videoData]);
+
+  /* ──── 思维导图（复用 ensureVideoData 缓存）──── */
+  const handleGenerateMindmap = useCallback(async () => {
+    if (!originalUrl) return;
+    try {
+      await ensureVideoData();
+    } catch {
+      return;
+    }
+    const subtitles = videoData?.subtitles || subtitlesCacheRef.current;
+    const title = videoData?.title || "";
+    setMindmapState("loading");
+    setMindmapError("");
+    setMindmapData("");
+    fetch("/api/video/mindmap-text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subtitles, title }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (data.success) {
+          setMindmapData(data.data.markdown);
+          setMindmapState("done");
+        } else {
+          throw new Error(data.message || "生成失败");
+        }
+      })
+      .catch((err) => {
+        setMindmapState("error");
+        setMindmapError(err.message);
+      });
+  }, [originalUrl, ensureVideoData, videoData]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   /* ──── 渲染 ──── */
   if (!originalUrl)
@@ -422,280 +516,367 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
       </div>
     );
 
-  const showContent = state === "done" && segments.length > 0;
+  const showContent = segments.length > 0;
 
   return (
     <div className="mt-6">
       <div className="card overflow-hidden">
-        {/* ═══ 视频 + Tab 功能区 ═══ */}
-        {/* 始终显示：只要有视频 URL 就展示播放器和 Tab */}
-        {(isBili || videoSrc) && (
-          <>
-            {/* 视频区 */}
-            <div ref={playerRef} className="bg-black relative">
-              {isBili && bvid ? (
-                <iframe
-                  ref={iframeRef}
-                  src={`//player.bilibili.com/player.html?bvid=${bvid}&page=1&autoplay=0`}
-                  allow="autoplay; fullscreen"
-                  sandbox="allow-scripts allow-same-origin allow-popups"
-                  className="w-full aspect-video max-h-[420px] border-0"
-                />
-              ) : videoSrc ? (
-                <video
-                  ref={videoRef}
-                  src={videoSrc}
-                  controls
-                  crossOrigin="anonymous"
-                  onTimeUpdate={onVideoTimeUpdate}
-                  className="w-full max-h-[420px]"
-                />
-              ) : null}
-            </div>
+        {/* Tab 栏 */}
+        <Tabs
+          tabs={[
+            { key: "summary", label: "核心总结", icon: Icon.sparkles },
+            { key: "subtitles", label: "完整字幕", icon: Icon.subtitles },
+            { key: "mindmap", label: "思维导图", icon: Icon.mindmap },
+          ]}
+          active={activeTab}
+          onChange={setActiveTab}
+        />
 
-            {/* Tab 栏 */}
-            <Tabs
-              tabs={[
-                { key: "summary", label: "核心总结", icon: Icon.sparkles },
-                { key: "subtitles", label: "完整字幕", icon: Icon.subtitles },
-              ]}
-              active={activeTab}
-              onChange={setActiveTab}
-            />
-
-            {/* Tab 内容 */}
-            <div className="max-h-[460px] overflow-y-auto">
-              {activeTab === "summary" && (
-                <div className="p-5">
-                  {summaryState === "idle" && (
-                    <div className="text-center py-8">
-                      <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-violet-50 flex items-center justify-center">
-                        <svg
-                          className="w-7 h-7 text-violet-400"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          strokeWidth={1.5}
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18"
-                          />
-                        </svg>
-                      </div>
-                      <p className="text-dark-500 text-sm">
-                        点击下方按钮，让 AI 帮你总结视频要点
-                      </p>
-                      <p className="text-dark-400 text-xs mt-1">
-                        自动提取字幕 · 智能分析 · 省时高效
-                      </p>
-                      <button
-                        onClick={handleSummarize}
-                        className="mt-4 px-5 py-2 bg-violet-600 text-white rounded-xl font-medium text-sm hover:bg-violet-700 active:scale-95 transition-all shadow-md shadow-violet-600/20"
+        {/* Tab 内容 */}
+        <div className="max-h-[460px] overflow-y-auto">
+          {activeTab === "summary" && (
+            <div className="p-5">
+              {summaryState === "idle" && parseState === "loading" ? (
+                <div className="text-center py-8">
+                  <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-violet-50 flex items-center justify-center animate-pulse">
+                    <span className="inline-block w-7 h-7 border-2 border-violet-200 border-t-violet-400 rounded-full animate-spin" />
+                  </div>
+                  <p className="text-dark-500 text-sm">{parseMessage}</p>
+                  <p className="text-dark-400 text-xs mt-1">
+                    解析完成后自动开始总结
+                  </p>
+                </div>
+              ) : (
+                summaryState === "idle" && (
+                  <div className="text-center py-8">
+                    <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-violet-50 flex items-center justify-center">
+                      <svg
+                        className="w-7 h-7 text-violet-400"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={1.5}
                       >
-                        ✨ 生成总结
-                      </button>
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18"
+                        />
+                      </svg>
                     </div>
-                  )}
-                  {summaryState === "summarizing" && (
-                    <div className="text-center py-8">
-                      <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-violet-50 flex items-center justify-center animate-pulse">
-                        <svg
-                          className="w-7 h-7 text-violet-400"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          strokeWidth={1.5}
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"
-                          />
-                        </svg>
-                      </div>
-                      <p className="text-dark-500 text-sm">
-                        {summaryMessage || "AI 分析中..."}
-                      </p>
-                      <p className="text-dark-400 text-xs mt-1">
-                        基于 DeepSeek 大模型
-                      </p>
-                    </div>
-                  )}
-                  {(summaryState === "streaming" ||
-                    summaryState === "done") && (
-                    <div>
-                      <div className="bg-dark-50 rounded-xl p-4 text-sm text-dark-800 leading-relaxed whitespace-pre-wrap max-h-80 overflow-y-auto">
-                        {summaryText}
-                        {summaryState === "streaming" && (
-                          <span className="inline-block w-2 h-4 bg-violet-600 ml-0.5 animate-pulse align-middle" />
-                        )}
-                      </div>
-                      {summaryState === "done" && (
-                        <button
-                          onClick={() =>
-                            navigator.clipboard.writeText(summaryText)
-                          }
-                          className="mt-3 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-dark-500 hover:text-dark-700 bg-white hover:bg-dark-50 border border-dark-200 rounded-lg transition-colors"
-                        >
-                          <svg
-                            className="w-3.5 h-3.5"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            strokeWidth={1.5}
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
-                            />
-                          </svg>
-                          复制总结
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {summaryState === "error" && (
-                    <div className="text-center py-6">
-                      <p className="text-red-600 text-sm">{summaryError}</p>
-                      <button
-                        onClick={handleSummarize}
-                        className="mt-3 px-4 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg"
+                    <p className="text-dark-500 text-sm">
+                      点击下方按钮，让 AI 帮你总结视频要点
+                    </p>
+                    <p className="text-dark-400 text-xs mt-1">
+                      自动提取字幕 · 智能分析 · 省时高效
+                    </p>
+                    <button
+                      onClick={handleSummarize}
+                      className="mt-4 px-5 py-2 bg-violet-600 text-white rounded-xl font-medium text-sm hover:bg-violet-700 active:scale-95 transition-all shadow-md shadow-violet-600/20"
+                    >
+                      ✨ 生成总结
+                    </button>
+                  </div>
+                )
+              )}
+              {summaryState === "summarizing" && (
+                <div className="text-center py-8">
+                  <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-violet-50 flex items-center justify-center animate-pulse">
+                    <svg
+                      className="w-7 h-7 text-violet-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"
+                      />
+                    </svg>
+                  </div>
+                  <p className="text-dark-500 text-sm">
+                    {summaryMessage || "AI 分析中..."}
+                  </p>
+                  <p className="text-dark-400 text-xs mt-1">
+                    基于 DeepSeek 大模型
+                  </p>
+                </div>
+              )}
+              {(summaryState === "streaming" || summaryState === "done") && (
+                <div>
+                  <div className="bg-dark-50 rounded-xl p-4 text-sm text-dark-800 leading-relaxed whitespace-pre-wrap max-h-80 overflow-y-auto">
+                    {summaryText}
+                    {summaryState === "streaming" && (
+                      <span className="inline-block w-2 h-4 bg-violet-600 ml-0.5 animate-pulse align-middle" />
+                    )}
+                  </div>
+                  {summaryState === "done" && (
+                    <button
+                      onClick={() => navigator.clipboard.writeText(summaryText)}
+                      className="mt-3 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-dark-500 hover:text-dark-700 bg-white hover:bg-dark-50 border border-dark-200 rounded-lg transition-colors"
+                    >
+                      <svg
+                        className="w-3.5 h-3.5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={1.5}
                       >
-                        重试
-                      </button>
-                    </div>
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
+                        />
+                      </svg>
+                      复制总结
+                    </button>
                   )}
                 </div>
               )}
+              {summaryState === "error" && (
+                <div className="text-center py-6">
+                  <p className="text-red-600 text-sm">{summaryError}</p>
+                  <button
+                    onClick={handleSummarize}
+                    className="mt-3 px-4 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg"
+                  >
+                    重试
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
-              {activeTab === "subtitles" &&
-                (showContent ? (
-                  <>
-                    <div ref={listRef}>
-                      {segments.map((seg, idx) => (
-                        <button
-                          key={idx}
-                          ref={(el) => {
-                            itemRefs.current[idx] = el;
-                          }}
-                          onClick={() => sync.onSubtitleClick(seg)}
-                          className={`w-full text-left px-4 py-2.5 flex gap-3 border-b border-dark-50 transition-all duration-150 hover:bg-blue-50/30 ${
-                            idx === sync.activeIndex
-                              ? "bg-blue-50 border-l-2 border-l-blue-500"
-                              : "border-l-2 border-l-transparent"
-                          }`}
-                        >
-                          <span
-                            className={`text-xs font-mono mt-0.5 shrink-0 ${idx === sync.activeIndex ? "text-blue-600 font-semibold" : "text-dark-400"}`}
-                          >
-                            {formatTime(seg.start)}
-                          </span>
-                          <span
-                            className={`text-sm leading-relaxed ${idx === sync.activeIndex ? "text-blue-800 font-medium" : "text-dark-700"}`}
-                          >
-                            {seg.text}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                    <div className="px-4 py-3 border-t border-dark-100 flex items-center justify-between text-xs text-dark-400">
-                      <span>
-                        {language === "zh"
-                          ? "中文"
-                          : language === "en"
-                            ? "English"
-                            : "自动识别"}{" "}
-                        · {segments.length} 条
-                      </span>
-                      <button
-                        onClick={() => {
-                          const vtt =
-                            "WEBVTT\n\n" +
-                            segments
-                              .map(
-                                (s, i) =>
-                                  `${i + 1}\n${_sec2vtt(s.start)} --> ${_sec2vtt(s.end)}\n${s.text}`,
-                              )
-                              .join("\n\n");
-                          const b = new Blob([vtt], { type: "text/vtt" });
-                          const a = document.createElement("a");
-                          a.href = URL.createObjectURL(b);
-                          a.download = "subtitles.vtt";
-                          a.click();
-                        }}
-                        className="px-3 py-1 text-dark-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                      >
-                        导出 VTT
-                      </button>
-                    </div>
-                  </>
-                ) : (
+          {activeTab === "mindmap" && (
+            <>
+              {mindmapState === "idle" && parseState === "loading" ? (
+                <div className="p-6 text-center">
+                  <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-amber-50 flex items-center justify-center animate-pulse">
+                    <span className="inline-block w-7 h-7 border-2 border-amber-200 border-t-amber-400 rounded-full animate-spin" />
+                  </div>
+                  <p className="text-dark-500 text-sm">{parseMessage}</p>
+                  <p className="text-dark-400 text-xs mt-1">
+                    解析完成后自动生成导图
+                  </p>
+                </div>
+              ) : (
+                mindmapState === "idle" && (
                   <div className="p-6 text-center">
-                    {state === "loading" ? (
-                      <div className="flex flex-col items-center gap-3">
-                        <span className="inline-block w-8 h-8 border-2 border-blue-200 border-t-blue-500 rounded-full animate-spin" />
-                        <p className="text-dark-500 text-sm">
-                          {message || "正在提取字幕..."}
+                    <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-amber-50 flex items-center justify-center">
+                      {Icon.mindmap}
+                    </div>
+                    {!summaryText &&
+                    !extractedSubtitles &&
+                    segments.length === 0 ? (
+                      <>
+                        <p className="text-dark-500 text-sm mb-1">
+                          暂无可用内容
                         </p>
-                      </div>
+                        <p className="text-dark-400 text-xs">
+                          请先在「核心总结」中生成总结，思维导图将自动创建
+                        </p>
+                      </>
                     ) : (
                       <>
-                        <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-blue-50 flex items-center justify-center">
-                          <svg
-                            className="w-7 h-7 text-blue-400"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            strokeWidth={1.5}
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"
-                            />
-                          </svg>
-                        </div>
                         <p className="text-dark-500 text-sm mb-1">
-                          提取视频字幕，支持自动高亮与点击跳转
+                          将视频内容可视化为思维导图
                         </p>
                         <p className="text-dark-400 text-xs mb-4">
-                          优先使用官方字幕，无字幕时自动语音识别
+                          基于 DeepSeek 大模型自动提炼逻辑结构
                         </p>
-                        <div className="flex items-center justify-center gap-2">
-                          <input
-                            type="text"
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            placeholder="上下文提示（可选）：AI, 编程, 流量…"
-                            className="px-3 py-2 text-xs border border-dark-200 rounded-lg w-52 focus:border-blue-400 outline-none focus:ring-1 focus:ring-blue-100 transition-all"
-                          />
-                          <button
-                            onClick={handleTranscribe}
-                            className="px-4 py-2 text-xs font-medium text-white bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl shadow-md shadow-blue-500/20 hover:from-cyan-600 hover:to-blue-700 active:scale-95 transition-all"
-                          >
-                            提取字幕
-                          </button>
-                        </div>
-                        {state === "error" && (
-                          <p className="mt-3 text-red-500 text-xs">{error}</p>
-                        )}
+                        <button
+                          onClick={handleGenerateMindmap}
+                          className="px-5 py-2 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 active:scale-95 transition-all shadow-md shadow-amber-500/20"
+                        >
+                          🧠 生成思维导图
+                        </button>
                       </>
                     )}
                   </div>
-                ))}
-            </div>
-          </>
-        )}
+                )
+              )}
+              {mindmapState === "loading" && (
+                <div className="p-6 text-center">
+                  <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-amber-50 flex items-center justify-center animate-pulse">
+                    {Icon.mindmap}
+                  </div>
+                  <p className="text-dark-500 text-sm">AI 正在提炼结构...</p>
+                  <p className="text-dark-400 text-xs mt-1">
+                    基于 DeepSeek 大模型
+                  </p>
+                </div>
+              )}
+              {mindmapState === "done" && (
+                <MindMapView markdown={mindmapData} />
+              )}
+              {mindmapState === "error" && (
+                <div className="p-6 text-center">
+                  <p className="text-red-600 text-sm">{mindmapError}</p>
+                  <button
+                    onClick={handleGenerateMindmap}
+                    className="mt-3 px-4 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg"
+                  >
+                    重试
+                  </button>
+                </div>
+              )}
+            </>
+          )}
 
-        {/* 无视频源时的提示 */}
-        {!isBili && !videoSrc && (
-          <div className="p-8 text-center text-dark-400 text-sm border-t border-dark-100">
-            下载视频后即可播放并查看同步字幕
-          </div>
-        )}
+          {activeTab === "subtitles" &&
+            (segments.length > 0 ? (
+              <>
+                <div ref={listRef}>
+                  {segments.map((seg, idx) => (
+                    <button
+                      key={idx}
+                      ref={(el) => {
+                        itemRefs.current[idx] = el;
+                      }}
+                      onClick={() => sync.onSubtitleClick(seg)}
+                      className={`w-full text-left px-4 py-2.5 flex gap-3 border-b border-dark-50 transition-all duration-150 hover:bg-blue-50/30 ${
+                        idx === sync.activeIndex
+                          ? "bg-blue-50 border-l-2 border-l-blue-500"
+                          : "border-l-2 border-l-transparent"
+                      }`}
+                    >
+                      <span
+                        className={`text-xs font-mono mt-0.5 shrink-0 ${idx === sync.activeIndex ? "text-blue-600 font-semibold" : "text-dark-400"}`}
+                      >
+                        {formatTime(seg.start)}
+                      </span>
+                      <span
+                        className={`text-sm leading-relaxed ${idx === sync.activeIndex ? "text-blue-800 font-medium" : "text-dark-700"}`}
+                      >
+                        {seg.text}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <div className="px-4 py-3 border-t border-dark-100 flex items-center justify-between text-xs text-dark-400">
+                  <span>
+                    {language === "zh"
+                      ? "中文"
+                      : language === "en"
+                        ? "English"
+                        : "自动识别"}{" "}
+                    · {segments.length} 条
+                  </span>
+                  <button
+                    onClick={() => {
+                      const vtt =
+                        "WEBVTT\n\n" +
+                        segments
+                          .map(
+                            (s, i) =>
+                              `${i + 1}\n${_sec2vtt(s.start)} --> ${_sec2vtt(s.end)}\n${s.text}`,
+                          )
+                          .join("\n\n");
+                      const b = new Blob([vtt], { type: "text/vtt" });
+                      const a = document.createElement("a");
+                      a.href = URL.createObjectURL(b);
+                      a.download = "subtitles.vtt";
+                      a.click();
+                    }}
+                    className="px-3 py-1 text-dark-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  >
+                    导出 VTT
+                  </button>
+                </div>
+              </>
+            ) : extractedSubtitles ? (
+              <div className="p-4">
+                <div className="bg-dark-50 rounded-xl p-4 text-sm text-dark-800 leading-relaxed whitespace-pre-wrap max-h-80 overflow-y-auto">
+                  {extractedSubtitles}
+                </div>
+                <div className="px-4 py-3 flex items-center justify-between text-xs text-dark-400">
+                  <button
+                    onClick={handleExtractSubtitles}
+                    disabled={state === "loading"}
+                    className="px-3 py-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {state === "loading" ? "提取中..." : "📝 获取带时间轴的字幕"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(extractedSubtitles);
+                    }}
+                    className="px-3 py-1 text-dark-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  >
+                    复制字幕
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-6 text-center">
+                {state === "loading" || parseState === "loading" ? (
+                  <div className="flex flex-col items-center gap-3">
+                    <span className="inline-block w-8 h-8 border-2 border-blue-200 border-t-blue-500 rounded-full animate-spin" />
+                    <p className="text-dark-500 text-sm">
+                      {parseMessage || message || "正在提取字幕..."}
+                    </p>
+                  </div>
+                ) : (parseState === "error" || state === "error") &&
+                  !extractedSubtitles ? (
+                  <div className="text-center">
+                    <p className="text-red-500 text-sm mb-3">
+                      {error || parseMessage}
+                    </p>
+                    <button
+                      onClick={handleExtractSubtitles}
+                      className="px-4 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg"
+                    >
+                      重试
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-blue-50 flex items-center justify-center">
+                      <svg
+                        className="w-7 h-7 text-blue-400"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={1.5}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"
+                        />
+                      </svg>
+                    </div>
+                    <p className="text-dark-500 text-sm mb-1">
+                      提取视频字幕，支持自动高亮与点击跳转
+                    </p>
+                    <p className="text-dark-400 text-xs mb-4">
+                      优先使用官方字幕，无字幕时自动语音识别
+                    </p>
+                    <div className="flex items-center justify-center gap-2">
+                      <input
+                        type="text"
+                        value={prompt}
+                        onChange={(e) => setPrompt(e.target.value)}
+                        placeholder="上下文提示（可选）：AI, 编程, 流量…"
+                        className="px-3 py-2 text-xs border border-dark-200 rounded-lg w-52 focus:border-blue-400 outline-none focus:ring-1 focus:ring-blue-100 transition-all"
+                      />
+                      <button
+                        onClick={handleExtractSubtitles}
+                        className="px-4 py-2 text-xs font-medium text-white bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl shadow-md shadow-blue-500/20 hover:from-cyan-600 hover:to-blue-700 active:scale-95 transition-all"
+                      >
+                        提取字幕
+                      </button>
+                    </div>
+                    {state === "error" && (
+                      <p className="mt-3 text-red-500 text-xs">{error}</p>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
+        </div>
       </div>
 
       {/* ═══ 画中画 Sticky ═══ */}

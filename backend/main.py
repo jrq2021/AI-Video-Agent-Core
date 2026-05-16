@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel
 from downloader import VideoDownloader
 from douyin import DouyinParser, is_douyin_url
-from summarizer import summarize_video, summarize_text
+from summarizer import summarize_video, summarize_text, generate_mindmap, parse_video
 from transcriber import transcribe_video as do_transcribe, segments_to_vtt, segments_to_srt
 from auth import create_user, authenticate_user, create_token, get_current_user, get_user_by_id
 
@@ -53,6 +53,29 @@ class SummarizeTextRequest(BaseModel):
     title: str = ""           # 视频标题（可选，提升总结质量）
     uploader: str = ""        # UP主（可选）
     description: str = ""     # 视频简介（可选）
+
+
+class MindMapRequest(BaseModel):
+    text: str = ""            # 字幕或总结文本
+    title: str = ""           # 视频标题（可选，提升结构提炼质量）
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 解耦后的 v2 API 请求模型
+# ═══════════════════════════════════════════════════════════════════
+
+class VideoParseRequest(BaseModel):
+    url: str
+
+
+class VideoSummarizeTextRequest(BaseModel):
+    subtitles: str = ""       # 字幕纯文本
+    title: str = ""           # 视频标题（可选）
+
+
+class VideoMindMapTextRequest(BaseModel):
+    subtitles: str = ""       # 字幕或总结文本
+    title: str = ""           # 视频标题（可选）
 
 
 class DownloadRequest(BaseModel):
@@ -219,6 +242,64 @@ async def download_video(req: DownloadRequest):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+# ═══════════════════════════════════════════════════════════════════
+# 解耦后的 v2 API
+# ═══════════════════════════════════════════════════════════════════
+
+@app.post("/api/video/parse")
+async def video_parse_endpoint(req: VideoParseRequest):
+    """
+    基础解析接口 — 只提取元数据+字幕（含 Whisper ASR 兜底），不调用任何大模型。
+    返回 { "success": true, "data": { "title": "...", "subtitles": "..." } }
+    """
+    try:
+        result = await asyncio.to_thread(parse_video, req.url)
+        return {"success": True, "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/video/summarize-text")
+async def video_summarize_text_endpoint(req: VideoSummarizeTextRequest):
+    """
+    文本总结接口 — 接收现成的字幕文本，调用 DeepSeek 流式返回总结。
+    SSE 格式：{ "status": "streaming"|"done"|"error", "content"?"...", "message"?"..." }
+    """
+    async def event_stream():
+        try:
+            for chunk in summarize_text(
+                subtitle_text=req.subtitles,
+                title=req.title,
+            ):
+                yield f"data: {json.dumps({'status': 'streaming', 'content': chunk}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'status': 'done', 'message': '总结完成'}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/api/video/mindmap-text")
+async def video_mindmap_text_endpoint(req: VideoMindMapTextRequest):
+    """
+    思维导图接口 — 接收现成的字幕文本，调用 DeepSeek 生成 Markdown 思维导图。
+    返回 { "success": true, "data": { "markdown": "..." } }
+    """
+    try:
+        markdown = await asyncio.to_thread(
+            generate_mindmap,
+            subtitle_text=req.subtitles,
+            title=req.title,
+        )
+        return {"success": True, "data": {"markdown": markdown}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 旧版 API（保持兼容）
+# ═══════════════════════════════════════════════════════════════════
+
 @app.post("/api/summarize/text")
 async def summarize_text_endpoint(req: SummarizeTextRequest):
     """
@@ -252,6 +333,23 @@ async def summarize_video_endpoint(req: URLRequest):
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/api/video/mindmap")
+async def generate_mindmap_endpoint(req: MindMapRequest):
+    """
+    生成视频思维导图 — 根据字幕/总结文本，调用 DeepSeek 提炼 Markdown 多级列表结构。
+    返回 { "success": true, "data": { "markdown": "..." } }
+    """
+    try:
+        markdown = await asyncio.to_thread(
+            generate_mindmap,
+            subtitle_text=req.text,
+            title=req.title,
+        )
+        return {"success": True, "data": {"markdown": markdown}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/transcribe")
