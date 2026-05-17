@@ -3,12 +3,14 @@ import Navbar from "./components/Navbar";
 import HeroSection from "./components/HeroSection";
 import VideoInput from "./components/VideoInput";
 import VideoInfo from "./components/VideoInfo";
+import VideoSubtitle from "./components/VideoSubtitle";
 import FeaturesSection from "./components/FeaturesSection";
 import FAQSection from "./components/FAQSection";
 import ContactSection from "./components/ContactSection";
 import DownloadHistory, { addHistoryItem } from "./components/DownloadHistory";
 import Footer from "./components/Footer";
 import AuthModal from "./components/AuthModal";
+import Background3D from "./components/Background3D";
 
 export default function App() {
   const [videoData, setVideoData] = useState(null);
@@ -28,7 +30,9 @@ export default function App() {
         // 验证 token 是否有效
         fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
           .then((r) => r.json())
-          .then((d) => { if (!d.success) handleLogout(); })
+          .then((d) => {
+            if (!d.success) handleLogout();
+          })
           .catch(() => {});
       } catch {
         handleLogout();
@@ -49,6 +53,7 @@ export default function App() {
   const handleAnalyze = async (url) => {
     setIsLoading(true);
     setError("");
+    setVideoData(null);
     try {
       const res = await fetch("/api/info", {
         method: "POST",
@@ -59,11 +64,9 @@ export default function App() {
       if (data.success) {
         setVideoData(data.data);
       } else {
-        setVideoData(null);
         setError(data.detail || "获取视频信息失败");
       }
     } catch (e) {
-      setVideoData(null);
       setError("网络错误，请检查后端是否运行");
     } finally {
       setIsLoading(false);
@@ -83,12 +86,22 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <Navbar user={user} onAuthClick={() => setAuthOpen(true)} onLogout={handleLogout} />
-      <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onLogin={handleLogin} />
-      <main className="flex-1">
+    <div className="min-h-screen flex flex-col relative">
+      {/* 3D 粒子背景 */}
+      <Background3D />
+      <Navbar
+        user={user}
+        onAuthClick={() => setAuthOpen(true)}
+        onLogout={handleLogout}
+      />
+      <AuthModal
+        isOpen={authOpen}
+        onClose={() => setAuthOpen(false)}
+        onLogin={handleLogin}
+      />
+      <main className="flex-1" aria-label="主要内容">
         <HeroSection />
-        <div className="max-w-3xl mx-auto px-4 pb-12">
+        <div className="max-w-7xl mx-auto px-4 pb-12">
           <VideoInput onAnalyze={handleAnalyze} isLoading={isLoading} />
           {error && (
             <div className="mt-4 p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 text-sm">
@@ -102,10 +115,22 @@ export default function App() {
             </div>
           )}
           {videoData && (
-            <VideoInfo
-              data={videoData}
-              onDownloadComplete={handleDownloadComplete}
-            />
+            <div className="mt-8 grid grid-cols-1 lg:grid-cols-5 gap-6">
+              {/* 左列：视频信息 + 画质选择 */}
+              <div className="lg:col-span-2 space-y-5">
+                <VideoInfo
+                  data={videoData}
+                  onDownloadComplete={handleDownloadComplete}
+                />
+              </div>
+              {/* 右列：AI 总结 / 字幕 / 思维导图 */}
+              <div className="lg:col-span-3">
+                <VideoSubtitle
+                  videoSrc={null}
+                  originalUrl={videoData.webpage_url}
+                />
+              </div>
+            </div>
           )}
         </div>
         <DownloadHistory key={historyKey} onReDownload={handleReDownload} />

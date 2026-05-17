@@ -68,12 +68,27 @@ export default function Navbar({ user, onAuthClick, onLogout }) {
             {user ? (
               <>
                 <span className="text-sm text-dark-500">{user.username}</span>
-                <button onClick={onLogout} className="btn-secondary text-sm !px-4 !py-2">退出</button>
+                <button
+                  onClick={onLogout}
+                  className="btn-secondary text-sm !px-4 !py-2"
+                >
+                  退出
+                </button>
               </>
             ) : (
               <>
-                <button onClick={onAuthClick} className="btn-secondary text-sm !px-4 !py-2">登录</button>
-                <button onClick={onAuthClick} className="btn-primary text-sm !px-4 !py-2">免费试用</button>
+                <button
+                  onClick={onAuthClick}
+                  className="btn-secondary text-sm !px-4 !py-2"
+                >
+                  登录
+                </button>
+                <button
+                  onClick={onAuthClick}
+                  className="btn-primary text-sm !px-4 !py-2"
+                >
+                  免费试用
+                </button>
               </>
             )}
           </div>
@@ -122,11 +137,26 @@ export default function Navbar({ user, onAuthClick, onLogout }) {
             ))}
             <div className="flex gap-3 mt-3">
               {user ? (
-                <button onClick={onLogout} className="btn-secondary text-sm flex-1 !py-2">退出登录</button>
+                <button
+                  onClick={onLogout}
+                  className="btn-secondary text-sm flex-1 !py-2"
+                >
+                  退出登录
+                </button>
               ) : (
                 <>
-                  <button onClick={onAuthClick} className="btn-secondary text-sm flex-1 !py-2">登录</button>
-                  <button onClick={onAuthClick} className="btn-primary text-sm flex-1 !py-2">注册</button>
+                  <button
+                    onClick={onAuthClick}
+                    className="btn-secondary text-sm flex-1 !py-2"
+                  >
+                    登录
+                  </button>
+                  <button
+                    onClick={onAuthClick}
+                    className="btn-primary text-sm flex-1 !py-2"
+                  >
+                    注册
+                  </button>
                 </>
               )}
             </div>

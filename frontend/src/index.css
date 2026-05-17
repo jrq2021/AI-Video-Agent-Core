@@ -25,8 +25,9 @@
   }
 
   .card {
-    @apply bg-white rounded-2xl border border-dark-100 shadow-sm 
-           hover:shadow-md transition-shadow duration-300;
+    @apply bg-white/80 backdrop-blur-md rounded-2xl border border-white/60 shadow-sm 
+           hover:shadow-lg hover:shadow-blue-500/5 hover:border-blue-200/50
+           transition-all duration-300;
   }
 
   .input-field {
@@ -79,4 +80,54 @@
 
 .animate-slide-up {
   animation: slideUp 0.3s ease-out;
+}
+
+/* ── AI 科技感动效 ─────────────────────────────────────────────── */
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes glow-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 8px rgba(59, 130, 246, 0.3),
+      0 0 20px rgba(59, 130, 246, 0.1);
+  }
+  50% {
+    box-shadow:
+      0 0 15px rgba(59, 130, 246, 0.5),
+      0 0 40px rgba(99, 102, 241, 0.2);
+  }
+}
+.animate-glow {
+  animation: glow-pulse 2.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
 }

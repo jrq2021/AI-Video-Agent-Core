@@ -133,7 +133,7 @@ export default function VideoInfo({ data, onDownloadComplete }) {
   };
 
   return (
-    <div className="mt-8 animate-fade-in-up">
+    <div className="animate-fade-in-up">
       {/* 视频信息卡片 */}
       <div className="card overflow-hidden">
         {/* 缩略图和基本信息 */}
@@ -212,79 +212,6 @@ export default function VideoInfo({ data, onDownloadComplete }) {
                 {data.description}
               </p>
             )}
-
-            {/* 下载按钮 */}
-            {downloadState !== "completed" ? (
-              <button
-                onClick={handleDownload}
-                disabled={downloadState === "downloading"}
-                className="btn-primary text-sm !px-5 !py-2.5"
-              >
-                {downloadState === "downloading" ? (
-                  <span className="flex items-center gap-2">
-                    <svg
-                      className="animate-spin w-4 h-4"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      ></circle>
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                      ></path>
-                    </svg>
-                    下载中...
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-2">
-                    <svg
-                      className="w-4 h-4"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"
-                      />
-                    </svg>
-                    下载视频
-                  </span>
-                )}
-              </button>
-            ) : (
-              <button
-                onClick={handleDownloadFile}
-                className="btn-primary text-sm !px-5 !py-2.5 !bg-green-500 !shadow-green-500/25 hover:!bg-green-600"
-              >
-                <span className="flex items-center gap-2">
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"
-                    />
-                  </svg>
-                  保存到本地
-                </span>
-              </button>
-            )}
           </div>
         </div>
 
@@ -298,17 +225,45 @@ export default function VideoInfo({ data, onDownloadComplete }) {
             <p className="text-red-500 text-sm">{progress.error}</p>
           </div>
         )}
+
+        {downloadState === "completed" && downloadFilename && (
+          <div className="px-5 pb-4">
+            <button
+              onClick={handleDownloadFile}
+              className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-indigo-500 text-white rounded-xl font-medium text-sm hover:from-blue-700 hover:to-indigo-600 active:scale-[0.98] transition-all shadow-lg shadow-blue-500/20"
+            >
+              <span className="flex items-center justify-center gap-2">
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"
+                  />
+                </svg>
+                保存到本地
+              </span>
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* 格式选择 */}
+      {/* 格式选择 — 点击即下载 */}
       {availableFormats.length > 0 && (
         <div className="mt-4 card p-5">
           <h3 className="text-sm font-semibold text-dark-700 mb-3">
-            选择画质 / 格式
+            选择画质下载
           </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {availableFormats.map((f) => {
               const isSelected = selectedFormat === f.format_id;
+              const isDownloading =
+                downloadState === "downloading" && isSelected;
               const height = f.resolution
                 ? parseInt(f.resolution.replace("p", ""))
                 : 0;
@@ -316,14 +271,67 @@ export default function VideoInfo({ data, onDownloadComplete }) {
               return (
                 <button
                   key={f.format_id}
-                  onClick={() => setSelectedFormat(f.format_id)}
+                  onClick={() => {
+                    if (downloadState === "downloading") return;
+                    setSelectedFormat(f.format_id);
+                    handleDownload();
+                  }}
                   disabled={downloadState === "downloading"}
-                  className={`relative flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-200 ${
+                  className={`relative flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-300 group ${
                     isSelected
-                      ? "border-primary-400 bg-primary-50 shadow-sm"
-                      : "border-dark-200 bg-white hover:border-dark-300 hover:bg-dark-25"
+                      ? "border-primary-400 bg-primary-50/80 backdrop-blur-sm ring-1 ring-primary-200 shadow-md shadow-blue-500/10"
+                      : "border-dark-200/60 bg-white/70 backdrop-blur-sm hover:border-primary-300 hover:bg-primary-50/40 hover:shadow-md hover:shadow-blue-500/5"
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
+                  {isDownloading && (
+                    <svg
+                      className="absolute top-1.5 right-1.5 w-4 h-4 animate-spin text-primary-500"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
+                    </svg>
+                  )}
+                  {!isDownloading && isSelected && (
+                    <svg
+                      className="absolute top-1.5 right-1.5 w-4 h-4 text-primary-500"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  )}
+                  {!isDownloading && !isSelected && (
+                    <svg
+                      className="absolute top-1.5 right-1.5 w-4 h-4 text-dark-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"
+                      />
+                    </svg>
+                  )}
                   <span
                     className={`text-sm font-bold ${
                       isSelected ? "text-primary-700" : "text-dark-700"
@@ -340,35 +348,12 @@ export default function VideoInfo({ data, onDownloadComplete }) {
                       {sizeStr}
                     </span>
                   )}
-                  {isSelected && (
-                    <svg
-                      className="absolute top-1.5 right-1.5 w-4 h-4 text-primary-500"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  )}
                 </button>
               );
             })}
           </div>
         </div>
       )}
-
-      {/* 字幕转录 / AI总结（统一 Tab 面板） */}
-      <VideoSubtitle
-        videoSrc={
-          downloadFilename
-            ? `/api/file/${encodeURIComponent(downloadFilename)}`
-            : null
-        }
-        originalUrl={data.webpage_url}
-      />
     </div>
   );
 }

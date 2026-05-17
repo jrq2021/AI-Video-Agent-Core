@@ -14,8 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel
 from downloader import VideoDownloader
 from douyin import DouyinParser, is_douyin_url
-from summarizer import summarize_video, summarize_text, generate_mindmap, parse_video
-from transcriber import transcribe_video as do_transcribe, segments_to_vtt, segments_to_srt
+from summarizer import summarize_video, parse_video, summarize_text, generate_mindmap, extract_subtitles_segments
 from auth import create_user, authenticate_user, create_token, get_current_user, get_user_by_id
 
 app = FastAPI(title="万能视频下载器", version="1.0.0")
@@ -41,43 +40,6 @@ class URLRequest(BaseModel):
     url: str
 
 
-class TranscribeRequest(BaseModel):
-    url: str
-    model: str = "base"       # tiny / base / small / medium / large
-    language: str = ""        # 空字符串 = 自动检测
-    prompt: str = ""          # Whisper 上下文提示，减少同音字错误
-
-
-class SummarizeTextRequest(BaseModel):
-    text: str                 # 字幕纯文本（必填）
-    title: str = ""           # 视频标题（可选，提升总结质量）
-    uploader: str = ""        # UP主（可选）
-    description: str = ""     # 视频简介（可选）
-
-
-class MindMapRequest(BaseModel):
-    text: str = ""            # 字幕或总结文本
-    title: str = ""           # 视频标题（可选，提升结构提炼质量）
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 解耦后的 v2 API 请求模型
-# ═══════════════════════════════════════════════════════════════════
-
-class VideoParseRequest(BaseModel):
-    url: str
-
-
-class VideoSummarizeTextRequest(BaseModel):
-    subtitles: str = ""       # 字幕纯文本
-    title: str = ""           # 视频标题（可选）
-
-
-class VideoMindMapTextRequest(BaseModel):
-    subtitles: str = ""       # 字幕或总结文本
-    title: str = ""           # 视频标题（可选）
-
-
 class DownloadRequest(BaseModel):
     url: str
     format_id: str = "best"
@@ -92,6 +54,18 @@ class RegisterRequest(BaseModel):
     username: str
     email: str
     password: str
+
+
+class SummarizeTextRequest(BaseModel):
+    subtitles: str
+    title: str = ""
+
+
+class TranscribeRequest(BaseModel):
+    url: str
+    model: str = "base"
+    language: str = ""
+    prompt: str = ""
 
 
 @app.get("/api/health")
@@ -128,39 +102,23 @@ async def me(user: dict = Depends(get_current_user)):
 
 @app.get("/api/thumbnail")
 async def proxy_thumbnail(url: str = Query(...)):
-    """代理缩略图，绕过防盗链。国内 CDN 直连，国外走系统代理"""
+    """代理缩略图，绕过防盗链"""
     import ssl, os
-    from urllib.parse import urlparse
 
-    # 国内 CDN 站点（直连，需清除代理环境变量以免被 Clash/V2Ray 干扰）
-    host = urlparse(url).netloc.lower()
-    is_domestic = any(d in host for d in (
-        "bilibili", "hdslb", "bilivideo",
-        "douyin", "iesdouyin", "ixigua", "xigua",
-        "kuaishou", "acfun",
-    ))
-
+    # 保存并清除代理环境变量（urllib 会读取它们）
     proxy_backup = {}
-    if is_domestic:
-        for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-            v = os.environ.pop(k, None)
-            if v is not None:
-                proxy_backup[k] = v
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        v = os.environ.pop(k, None)
+        if v is not None:
+            proxy_backup[k] = v
 
     try:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
 
-        if any(d in host for d in ("bilibili", "hdslb", "bilivideo")):
-            referer = "https://www.bilibili.com"
-        elif "youtube" in host or "ytimg" in host:
-            referer = "https://www.youtube.com"
-        else:
-            referer = "https://www.google.com"
-
         req = urllib.request.Request(url, headers={
-            "Referer": referer,
+            "Referer": "https://www.bilibili.com",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         })
         with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
@@ -170,6 +128,7 @@ async def proxy_thumbnail(url: str = Query(...)):
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"缩略图加载失败: {url[:80]}")
     finally:
+        # 恢复代理环境变量
         for k, v in proxy_backup.items():
             os.environ[k] = v
 
@@ -242,86 +201,6 @@ async def download_video(req: DownloadRequest):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-# ═══════════════════════════════════════════════════════════════════
-# 解耦后的 v2 API
-# ═══════════════════════════════════════════════════════════════════
-
-@app.post("/api/video/parse")
-async def video_parse_endpoint(req: VideoParseRequest):
-    """
-    基础解析接口 — 只提取元数据+字幕（含 Whisper ASR 兜底），不调用任何大模型。
-    返回 { "success": true, "data": { "title": "...", "subtitles": "..." } }
-    """
-    try:
-        result = await asyncio.to_thread(parse_video, req.url)
-        return {"success": True, "data": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/video/summarize-text")
-async def video_summarize_text_endpoint(req: VideoSummarizeTextRequest):
-    """
-    文本总结接口 — 接收现成的字幕文本，调用 DeepSeek 流式返回总结。
-    SSE 格式：{ "status": "streaming"|"done"|"error", "content"?"...", "message"?"..." }
-    """
-    async def event_stream():
-        try:
-            for chunk in summarize_text(
-                subtitle_text=req.subtitles,
-                title=req.title,
-            ):
-                yield f"data: {json.dumps({'status': 'streaming', 'content': chunk}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'status': 'done', 'message': '总结完成'}, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'status': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
-
-
-@app.post("/api/video/mindmap-text")
-async def video_mindmap_text_endpoint(req: VideoMindMapTextRequest):
-    """
-    思维导图接口 — 接收现成的字幕文本，调用 DeepSeek 生成 Markdown 思维导图。
-    返回 { "success": true, "data": { "markdown": "..." } }
-    """
-    try:
-        markdown = await asyncio.to_thread(
-            generate_mindmap,
-            subtitle_text=req.subtitles,
-            title=req.title,
-        )
-        return {"success": True, "data": {"markdown": markdown}}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 旧版 API（保持兼容）
-# ═══════════════════════════════════════════════════════════════════
-
-@app.post("/api/summarize/text")
-async def summarize_text_endpoint(req: SummarizeTextRequest):
-    """
-    纯文本总结 — 不涉及任何 URL 解析或音频下载。
-    前端先通过 /api/transcribe 获取字幕，再将文本传入此接口。
-    """
-    async def event_stream():
-        try:
-            for chunk in summarize_text(
-                subtitle_text=req.text,
-                title=req.title,
-                uploader=req.uploader,
-                description=req.description,
-            ):
-                yield f"data: {json.dumps({'status': 'streaming', 'content': chunk}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'status': 'done', 'message': '总结完成'}, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'status': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
-
-
 @app.post("/api/summarize")
 async def summarize_video_endpoint(req: URLRequest):
     """AI 视频总结，通过 SSE 流式推送"""
@@ -335,96 +214,79 @@ async def summarize_video_endpoint(req: URLRequest):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@app.post("/api/video/mindmap")
-async def generate_mindmap_endpoint(req: MindMapRequest):
-    """
-    生成视频思维导图 — 根据字幕/总结文本，调用 DeepSeek 提炼 Markdown 多级列表结构。
-    返回 { "success": true, "data": { "markdown": "..." } }
-    """
+@app.post("/api/video/parse")
+async def video_parse(req: URLRequest):
+    """解析视频：提取标题+字幕（无字幕自动 ASR），供前端 Tab 面板使用"""
     try:
-        markdown = await asyncio.to_thread(
-            generate_mindmap,
-            subtitle_text=req.text,
-            title=req.title,
-        )
-        return {"success": True, "data": {"markdown": markdown}}
+        data = await asyncio.to_thread(parse_video, req.url)
+        return {"success": True, "data": data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.post("/api/transcribe")
-async def transcribe_video_endpoint(req: TranscribeRequest):
-    """视频字幕/转录提取，SSE 流式返回带时间戳的字幕片段"""
-
+@app.post("/api/video/summarize-text")
+async def video_summarize_text(req: SummarizeTextRequest):
+    """基于已有字幕文本进行 AI 总结，SSE 流式输出"""
     async def event_stream():
         try:
-            language = req.language.strip() if req.language else None
-            prompt = req.prompt.strip() if req.prompt else None
-            for chunk in do_transcribe(req.url, model_name=req.model,
-                                        language=language, initial_prompt=prompt):
-                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            for chunk in summarize_text(req.subtitles, req.title):
+                if isinstance(chunk, dict):
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                else:
+                    yield f"data: {json.dumps({'status': 'streaming', 'content': chunk}, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@app.get("/api/stream/bilibili/{bvid}/{cid}")
-async def stream_bilibili_video(bvid: str, cid: str, qn: str = "16"):
-    """
-    视频流代理：获取 B站真实视频流并转发给前端，绕过 CORS。
-    前端可直接用 <video src="/api/stream/bilibili/{bvid}/{cid}"> 播放。
-    """
-    from transcriber import _bilibili_get_video_stream_info
-
-    info = _bilibili_get_video_stream_info(bvid, cid)
-    if not info:
-        raise HTTPException(status_code=502, detail="无法获取 B站视频流")
-
-    video_url = info.get("video_url") or info.get("audio_url")
-    if not video_url:
-        raise HTTPException(status_code=502, detail="无可用的视频/音频流")
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://www.bilibili.com/",
-    }
-
-    # 直连绕过代理
-    import os as _os
-    proxy_backup = {}
-    for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-        v = _os.environ.pop(k, None)
-        if v is not None:
-            proxy_backup[k] = v
-
-    def cleanup():
-        for k, v in proxy_backup.items():
-            _os.environ[k] = v
-
+@app.post("/api/video/mindmap-text")
+async def video_mindmap_text(req: SummarizeTextRequest):
+    """基于已有字幕文本生成思维导图 Markdown"""
     try:
-        import requests as _requests
-        resp = _requests.get(video_url, headers=headers, stream=True, timeout=120)
-        resp.raise_for_status()
-        content_type = resp.headers.get("Content-Type", "video/mp4")
-        content_length = resp.headers.get("Content-Length")
-
-        def generate():
-            try:
-                for chunk in resp.iter_content(chunk_size=65536):
-                    yield chunk
-            finally:
-                resp.close()
-                cleanup()
-
-        return StreamingResponse(
-            generate(),
-            media_type=content_type,
-            headers={"Content-Length": content_length} if content_length else {},
-        )
+        markdown = await asyncio.to_thread(generate_mindmap, req.subtitles, req.title)
+        return {"success": True, "data": {"markdown": markdown}}
     except Exception as e:
-        cleanup()
-        raise HTTPException(status_code=502, detail=f"流代理失败: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/transcribe")
+async def transcribe_video(req: TranscribeRequest):
+    """音频转录为带时间轴字幕，SSE 流式输出"""
+    from summarizer import transcribe_audio, download_audio, extract_subtitles_segments
+
+    async def event_stream():
+        try:
+            yield f"data: {json.dumps({'status': 'checking', 'message': '正在提取字幕...'}, ensure_ascii=False)}\n\n"
+
+            # 优先用 extract_subtitles_segments 获取带时间轴的字幕
+            result = await asyncio.to_thread(extract_subtitles_segments, req.url)
+            if result["has_subtitle"] and result["segments"]:
+                yield f"data: {json.dumps({'status': 'done', 'segments': result['segments'], 'language': result.get('language', 'zh')}, ensure_ascii=False)}\n\n"
+                return
+
+            # 无官方字幕：走 ASR
+            yield f"data: {json.dumps({'status': 'downloading_audio', 'message': '未找到字幕，正在下载音频...'}, ensure_ascii=False)}\n\n"
+            audio_path = await asyncio.to_thread(download_audio, req.url)
+            if not audio_path:
+                yield f"data: {json.dumps({'status': 'error', 'message': '音频下载失败'}, ensure_ascii=False)}\n\n"
+                return
+
+            yield f"data: {json.dumps({'status': 'transcribing', 'message': '正在语音识别...'}, ensure_ascii=False)}\n\n"
+            text = await asyncio.to_thread(transcribe_audio, audio_path)
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
+
+            if text:
+                yield f"data: {json.dumps({'status': 'done', 'segments': [{'text': text}], 'language': 'auto'}, ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {json.dumps({'status': 'error', 'message': '语音识别未返回结果'}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/api/file/{filename}")

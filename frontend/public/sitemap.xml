@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
+        xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">
+
+    <!--
+    ============================================
+    Sitemap 使用说明：
+    1. 将所有的 your-domain.com 替换为你的实际域名
+    2. <lastmod> 改为实际页面最后修改日期
+    3. <priority> 范围 0.0~1.0，首页最高
+    4. <changefreq>: always / hourly / daily / weekly / monthly / yearly / never
+    ============================================
+    -->
+
+    <!-- 首页 — 最高优先级 -->
+    <url>
+        <loc>https://your-domain.com</loc>
+        <lastmod>2026-05-17</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>1.0</priority>
+    </url>
+
+    <!-- 功能特色页（单页应用锚点，但搜索引擎需要独立 URL 才能收录） -->
+    <url>
+        <loc>https://your-domain.com/#features</loc>
+        <lastmod>2026-05-17</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.8</priority>
+    </url>
+
+    <!-- 常见问题 -->
+    <url>
+        <loc>https://your-domain.com/#faq</loc>
+        <lastmod>2026-05-17</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.7</priority>
+    </url>
+
+    <!--
+    注意：单页应用（SPA）中 # 锚点链接对 SEO 意义有限。
+    如果要让这些内容被充分收录，推荐方案：
+    - 方案 C：预渲染生成独立 HTML
+    - 方案 B：升级为 SSR（Next.js/Nuxt）
+    详见 docs/seo-prerender-guide.md
+    -->
+
+</urlset>

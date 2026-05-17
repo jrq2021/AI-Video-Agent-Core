@@ -3,13 +3,113 @@
 
 <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>万能视频下载器 - 支持多平台视频下载</title>
-    <meta name="description" content="免费、快速的万能视频下载工具，支持YouTube、B站、抖音等上千个平台的视频下载，高清无水印" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+
+    <!-- =====  Favicon  ===== -->
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="apple-touch-icon" href="/vite.svg" />
+
+    <!-- =====  TDK (Title / Description / Keywords)  ===== -->
+    <title>万能视频在线下载 - 无水印视频解析工具 | 支持B站/抖音/YouTube高清下载</title>
+    <meta name="description" content="万能视频在线下载器，免费无水印解析抖音、B站、YouTube等1000+平台视频。支持高清4K下载、m3u8流媒体提取、字幕导出，网页视频一键保存到本地。" />
+    <meta name="keywords" content="万能视频下载,在线视频下载,无水印视频解析,B站视频下载,抖音无水印下载,YouTube视频下载,m3u8下载,网页视频提取,高清视频下载,视频解析工具" />
+
+    <!-- =====  Canonical URL（替换为你的实际域名） ===== -->
+    <link rel="canonical" href="https://your-domain.com" />
+
+    <!-- =====  Robots 指令  ===== -->
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="author" content="万能视频下载器" />
+    <meta name="theme-color" content="#4f46e5" />
+
+    <!-- =====  Open Graph（Facebook / LinkedIn / 微信 等社交分享） ===== -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="万能视频下载器" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:title" content="万能视频在线下载 - 无水印视频解析工具" />
+    <meta property="og:description" content="免费在线万能视频下载器，支持B站、抖音、YouTube等1000+平台。高清无水印、m3u8提取、AI字幕总结，一键保存到本地。" />
+    <meta property="og:url" content="https://your-domain.com" />
+    <meta property="og:image" content="https://your-domain.com/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="万能视频下载器 - 多平台视频解析下载工具预览图" />
+
+    <!-- =====  Twitter Card  ===== -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@your_twitter" />
+    <meta name="twitter:title" content="万能视频在线下载 - 无水印视频解析工具" />
+    <meta name="twitter:description" content="免费在线万能视频下载器，支持B站、抖音、YouTube等1000+平台。高清无水印，一键保存到本地。" />
+    <meta name="twitter:image" content="https://your-domain.com/og-image.png" />
+    <meta name="twitter:image:alt" content="万能视频下载器 - 多平台视频解析下载工具预览图" />
+
+    <!-- =====  JSON-LD 结构化数据（WebApplication） ===== -->
+    <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@type": "WebApplication",
+            "name": "万能视频下载器",
+            "alternateName": "万能视频在线下载",
+            "url": "https://your-domain.com",
+            "description": "免费在线万能视频下载工具，支持B站、抖音、YouTube等1000+平台无水印视频解析与高清下载。",
+            "applicationCategory": "MultimediaApplication",
+            "operatingSystem": "Web",
+            "offers": {
+                "@type": "Offer",
+                "price": "0",
+                "priceCurrency": "CNY"
+            },
+            "author": {
+                "@type": "Organization",
+                "name": "万能视频下载器"
+            },
+            "browserRequirements": "Requires JavaScript"
+        }
+    </script>
+
+    <!-- =====  FAQ 结构化数据（与 FAQSection 组件中的内容保持同步） ===== -->
+    <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+                {
+                    "@type": "Question",
+                    "name": "支持哪些平台的视频下载？",
+                    "acceptedAnswer": {
+                        "@type": "Answer",
+                        "text": "基于 yt-dlp 开源引擎，支持 YouTube、B站、Twitter/X、Instagram、Facebook、Vimeo、优酷、腾讯视频等全球 1000+ 个视频平台的视频下载。"
+                    }
+                },
+                {
+                    "@type": "Question",
+                    "name": "需要付费吗？有下载次数限制吗？",
+                    "acceptedAnswer": {
+                        "@type": "Answer",
+                        "text": "基础功能完全免费，无限次下载，无需注册登录。"
+                    }
+                },
+                {
+                    "@type": "Question",
+                    "name": "手机上能用吗？",
+                    "acceptedAnswer": {
+                        "@type": "Answer",
+                        "text": "当然可以！网站完全适配手机浏览器，在 iPhone、Android 等移动设备上直接粘贴链接下载视频，无需安装任何 APP。"
+                    }
+                }
+            ]
+        }
+    </script>
 </head>
 
 <body class="bg-white">
+    <noscript>
+        <div style="text-align:center;padding:80px 20px;font-size:16px;color:#555;">
+            <h1>万能视频在线下载 - 无水印视频解析工具</h1>
+            <p>免费在线万能视频下载器，支持B站、抖音、YouTube等1000+平台。高清无水印，一键保存到本地。</p>
+            <p>请启用 JavaScript 以使用完整的视频下载功能。</p>
+        </div>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
 </body>

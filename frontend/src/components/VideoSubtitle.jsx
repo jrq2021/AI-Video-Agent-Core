@@ -1,8 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { marked } from "marked";
 import useVideoSync from "../hooks/useVideoSync";
 import MindMapView from "./MindMapView";
 
-/* ── 工具 ────────────────────────────────────────────────────────── */
+/* ── 配置 marked ────────────────────────────────────────────────── */
+marked.setOptions({ breaks: true, gfm: true });
 function formatTime(s) {
   const h = Math.floor(s / 3600),
     m = Math.floor((s % 3600) / 60);
@@ -20,6 +22,24 @@ function _sec2vtt(s) {
   const h = Math.floor(s / 3600),
     m = Math.floor((s % 3600) / 60);
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${(s % 60).toFixed(3).padStart(6, "0")}`;
+}
+function _sec2srt(s) {
+  const h = Math.floor(s / 3600),
+    m = Math.floor((s % 3600) / 60),
+    sec = Math.floor(s % 60),
+    ms = Math.floor((s % 1) * 1000);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
+}
+function downloadSubtitleFile(content, filename) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /* ── 内联 SVG 图标 ───────────────────────────────────────────────── */
@@ -142,7 +162,7 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
   const [parseState, setParseState] = useState("idle"); // idle|loading|done|error
   const [parseMessage, setParseMessage] = useState("");
   const parsePromiseRef = useRef(null);
-  const subtitlesCacheRef = useRef("");  // 解决异步闭包中 stale state 问题
+  const subtitlesCacheRef = useRef(""); // 解决异步闭包中 stale state 问题
 
   // ── 字幕/转录状态 ──
   const [state, setState] = useState("idle"); // idle|loading|done|error
@@ -162,10 +182,6 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
   const [mindmapData, setMindmapData] = useState("");
   const [mindmapState, setMindmapState] = useState("idle"); // idle|loading|done|error
   const [mindmapError, setMindmapError] = useState("");
-
-  // ── 画中画 ──
-  const [isPiP, setIsPiP] = useState(false);
-  const playerRef = useRef(null);
 
   // ── 播放器引用 ──
   const videoRef = useRef(null);
@@ -217,12 +233,19 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
         const json = await res.json();
         if (!json.success) throw new Error(json.detail || "解析失败");
 
+        const data = json.data;
         setVideoData({
-          title: json.data.title,
-          subtitles: json.data.subtitles,
+          title: data.title,
+          subtitles: data.subtitles,
         });
-        setExtractedSubtitles(json.data.subtitles);
-        subtitlesCacheRef.current = json.data.subtitles;
+        setExtractedSubtitles(data.subtitles);
+        subtitlesCacheRef.current = data.subtitles;
+        // 如果后端返回了带时间轴的分段，直接使用
+        if (data.segments && data.segments.length > 0) {
+          setSegments(data.segments);
+          setLanguage(data.language || "");
+          setState("done");
+        }
         setParseState("done");
       } catch (err) {
         setParseState("error");
@@ -291,17 +314,6 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
   const onVideoTimeUpdate = useCallback(() => {
     if (videoRef.current) sync.onTimeUpdate(videoRef.current.currentTime);
   }, [sync]);
-
-  /* ──── 画中画：IntersectionObserver ──── */
-  useEffect(() => {
-    const el = playerRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(([e]) => setIsPiP(!e.isIntersecting), {
-      threshold: 0.3,
-    });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [state]);
 
   /* ──── 滚动高亮字幕 ──── */
   useEffect(() => {
@@ -516,8 +528,6 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
       </div>
     );
 
-  const showContent = segments.length > 0;
-
   return (
     <div className="mt-6">
       <div className="card overflow-hidden">
@@ -538,8 +548,8 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
             <div className="p-5">
               {summaryState === "idle" && parseState === "loading" ? (
                 <div className="text-center py-8">
-                  <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-violet-50 flex items-center justify-center animate-pulse">
-                    <span className="inline-block w-7 h-7 border-2 border-violet-200 border-t-violet-400 rounded-full animate-spin" />
+                  <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-blue-50 flex items-center justify-center animate-pulse">
+                    <span className="inline-block w-7 h-7 border-2 border-blue-200 border-t-blue-400 rounded-full animate-spin" />
                   </div>
                   <p className="text-dark-500 text-sm">{parseMessage}</p>
                   <p className="text-dark-400 text-xs mt-1">
@@ -549,9 +559,9 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
               ) : (
                 summaryState === "idle" && (
                   <div className="text-center py-8">
-                    <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-violet-50 flex items-center justify-center">
+                    <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center shadow-sm animate-float">
                       <svg
-                        className="w-7 h-7 text-violet-400"
+                        className="w-8 h-8 text-blue-500"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
@@ -560,30 +570,30 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
                         <path
                           strokeLinecap="round"
                           strokeLinejoin="round"
-                          d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18"
+                          d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"
                         />
                       </svg>
                     </div>
-                    <p className="text-dark-500 text-sm">
-                      点击下方按钮，让 AI 帮你总结视频要点
+                    <p className="text-dark-600 text-sm font-medium">
+                      AI 智能总结
                     </p>
-                    <p className="text-dark-400 text-xs mt-1">
-                      自动提取字幕 · 智能分析 · 省时高效
+                    <p className="text-dark-400 text-xs mt-1.5 max-w-xs mx-auto">
+                      自动提取视频字幕，通过 DeepSeek 大模型生成结构化要点总结
                     </p>
                     <button
                       onClick={handleSummarize}
-                      className="mt-4 px-5 py-2 bg-violet-600 text-white rounded-xl font-medium text-sm hover:bg-violet-700 active:scale-95 transition-all shadow-md shadow-violet-600/20"
+                      className="relative mt-5 px-6 py-2.5 bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-500 text-white rounded-xl font-medium text-sm hover:from-blue-700 hover:via-blue-600 hover:to-indigo-600 active:scale-95 transition-all shadow-lg shadow-blue-500/25 animate-glow"
                     >
-                      ✨ 生成总结
+                      <span className="relative z-10">✨ 生成 AI 总结</span>
                     </button>
                   </div>
                 )
               )}
               {summaryState === "summarizing" && (
                 <div className="text-center py-8">
-                  <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-violet-50 flex items-center justify-center animate-pulse">
+                  <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-blue-50 flex items-center justify-center animate-pulse">
                     <svg
-                      className="w-7 h-7 text-violet-400"
+                      className="w-7 h-7 text-blue-400"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -606,12 +616,16 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
               )}
               {(summaryState === "streaming" || summaryState === "done") && (
                 <div>
-                  <div className="bg-dark-50 rounded-xl p-4 text-sm text-dark-800 leading-relaxed whitespace-pre-wrap max-h-80 overflow-y-auto">
-                    {summaryText}
-                    {summaryState === "streaming" && (
-                      <span className="inline-block w-2 h-4 bg-violet-600 ml-0.5 animate-pulse align-middle" />
-                    )}
-                  </div>
+                  <div
+                    className="prose prose-sm max-w-none bg-dark-50 rounded-xl p-4 max-h-80 overflow-y-auto"
+                    dangerouslySetInnerHTML={{
+                      __html:
+                        marked.parse(summaryText || "") +
+                        (summaryState === "streaming"
+                          ? '<span class="inline-block w-2 h-4 bg-blue-500 ml-0.5 animate-pulse align-middle"></span>'
+                          : ""),
+                    }}
+                  />
                   {summaryState === "done" && (
                     <button
                       onClick={() => navigator.clipboard.writeText(summaryText)}
@@ -728,7 +742,7 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
           {activeTab === "subtitles" &&
             (segments.length > 0 ? (
               <>
-                <div ref={listRef}>
+                <div ref={listRef} className="max-h-[400px] overflow-y-auto">
                   {segments.map((seg, idx) => (
                     <button
                       key={idx}
@@ -755,7 +769,7 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
                     </button>
                   ))}
                 </div>
-                <div className="px-4 py-3 border-t border-dark-100 flex items-center justify-between text-xs text-dark-400">
+                <div className="px-4 py-3 border-t border-dark-100 bg-white flex items-center justify-between text-xs text-dark-400">
                   <span>
                     {language === "zh"
                       ? "中文"
@@ -764,26 +778,38 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
                         : "自动识别"}{" "}
                     · {segments.length} 条
                   </span>
-                  <button
-                    onClick={() => {
-                      const vtt =
-                        "WEBVTT\n\n" +
-                        segments
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        const srt = segments
                           .map(
                             (s, i) =>
-                              `${i + 1}\n${_sec2vtt(s.start)} --> ${_sec2vtt(s.end)}\n${s.text}`,
+                              `${i + 1}\n${_sec2srt(s.start)} --> ${_sec2srt(s.end)}\n${s.text}`,
                           )
                           .join("\n\n");
-                      const b = new Blob([vtt], { type: "text/vtt" });
-                      const a = document.createElement("a");
-                      a.href = URL.createObjectURL(b);
-                      a.download = "subtitles.vtt";
-                      a.click();
-                    }}
-                    className="px-3 py-1 text-dark-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                  >
-                    导出 VTT
-                  </button>
+                        downloadSubtitleFile(srt, "subtitles.srt");
+                      }}
+                      className="px-3 py-1 text-dark-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    >
+                      导出 SRT
+                    </button>
+                    <button
+                      onClick={() => {
+                        const vtt =
+                          "WEBVTT\n\n" +
+                          segments
+                            .map(
+                              (s, i) =>
+                                `${i + 1}\n${_sec2vtt(s.start)} --> ${_sec2vtt(s.end)}\n${s.text}`,
+                            )
+                            .join("\n\n");
+                        downloadSubtitleFile(vtt, "subtitles.vtt");
+                      }}
+                      className="px-3 py-1 text-dark-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    >
+                      导出 VTT
+                    </button>
+                  </div>
                 </div>
               </>
             ) : extractedSubtitles ? (
@@ -797,16 +823,31 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
                     disabled={state === "loading"}
                     className="px-3 py-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50"
                   >
-                    {state === "loading" ? "提取中..." : "📝 获取带时间轴的字幕"}
+                    {state === "loading"
+                      ? "提取中..."
+                      : "📝 获取带时间轴的字幕"}
                   </button>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(extractedSubtitles);
-                    }}
-                    className="px-3 py-1 text-dark-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                  >
-                    复制字幕
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        downloadSubtitleFile(
+                          extractedSubtitles,
+                          "subtitles.txt",
+                        );
+                      }}
+                      className="px-3 py-1 text-dark-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    >
+                      下载 TXT
+                    </button>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(extractedSubtitles);
+                      }}
+                      className="px-3 py-1 text-dark-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    >
+                      复制字幕
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -878,38 +919,6 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
             ))}
         </div>
       </div>
-
-      {/* ═══ 画中画 Sticky ═══ */}
-      {isPiP && showContent && (
-        <div className="fixed bottom-4 right-4 z-50 w-72 bg-black rounded-xl shadow-2xl overflow-hidden border border-dark-700 animate-slide-up">
-          <div className="flex items-center justify-between px-3 py-1.5 bg-dark-800 text-white text-xs">
-            <span className="truncate">画中画 · 字幕同步中</span>
-            <button
-              onClick={() => setIsPiP(false)}
-              className="text-dark-400 hover:text-white"
-            >
-              {Icon.close}
-            </button>
-          </div>
-          {isBili && bvid ? (
-            <iframe
-              src={`//player.bilibili.com/player.html?bvid=${bvid}&page=1&autoplay=0`}
-              className="w-full aspect-video border-0"
-              allow="autoplay"
-              sandbox="allow-scripts allow-same-origin"
-            />
-          ) : videoSrc ? (
-            <video
-              ref={videoRef}
-              src={videoSrc}
-              controls
-              crossOrigin="anonymous"
-              onTimeUpdate={onVideoTimeUpdate}
-              className="w-full"
-            />
-          ) : null}
-        </div>
-      )}
     </div>
   );
 }

@@ -6,8 +6,11 @@ AI 视频总结模块
 - 支持 SSE 流式输出
 """
 import os
+import re
+import json
 import logging
 import tempfile
+import urllib.request
 from pathlib import Path
 from typing import Generator, Optional
 
@@ -27,30 +30,60 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 # Whisper 模型（tiny/base/small/medium/large），base 对中文支持较好且速度适中
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base")
 
-SUMMARY_PROMPT = """你是一个专业的视频内容总结助手。请结合以下视频基本信息和字幕内容，生成一份全面、有洞察力的总结。
+SUMMARY_PROMPT = """# 字幕内容
+{subtitle_text}
 
-## 视频基本信息
+# Role
+你是一位资深的知识萃取专家。你擅长从繁杂的视频文案中，精准剥离出最核心的骨架，并能提炼出具有启发性的深度洞察。
+
+# Task
+仔细阅读 <Input_Text> 中的视频字幕/文本，生成一份全面、深刻且极具视觉层次感的内容总结。
+
+# Rules
+1. 拒绝表面概括：不要只罗列“视频说了什么”，必须深挖“背后的逻辑、原因和本质”。
+2. 视觉化排版：充分利用 Emoji 图标作为视觉锚点，构建清晰的信息层级，提升前端渲染后的阅读体验。
+3. 结构严谨：严格按照 <Output_Format> 的结构和图标输出，直接切入正题，禁止任何寒暄、废话或过渡句。
+4. 防呆指令：必须提炼 <Input_Text> 的实际内容，绝不允许照抄或输出模板中的占位符说明。
+
+# Output_Format
+🎯 **核心精髓**
+[用 1-2 句话，一针见血地指出视频的终极核心论点或最大价值]
+
+🗺️ **全局知识拆解**
+[将视频内容按逻辑拆解为 3-5 个核心模块，提取干货]
+* 🔹 **[提炼模块一主题]**：[核心结论/观点，不超过30字]
+  * ▫️ [支撑该论点的关键细节/数据/案例 1]
+  * ▫️ [支撑该论点的关键细节/数据/案例 2]
+* 🔹 **[提炼模块二主题]**：[核心结论/观点，不超过30字]
+  * ▫️ [支撑该论点的关键细节/数据/案例 1]
+  * ▫️ [支撑该论点的关键细节/数据/案例 2]
+*(根据视频实际内容长度自然增减模块，保持结构对齐)*
+
+💡 **深度洞察 (Aha Moment)**
+* 👁️‍🗨️ [提炼视频中 1-2 个最反直觉、最具认知冲击力、或最能引发思考的深层观点，解释其为什么重要]
+
+🚀 **行动指南**
+* ✅ [基于视频内容，给出 1-3 个用户看完后可以立刻落地执行的具体建议，拒绝假大空]"""
+
+# 无字幕时的简化 Prompt
+NO_SUB_SUMMARY_PROMPT = """# 视频基本信息
 - 标题：{title}
 - UP主/作者：{uploader}
 - 简介：{description}
 
-## 要求
-1. **视频摘要**：结合标题和简介，用 2-3 句话概括视频的核心内容和主题。
-2. **核心要点**：列出 5-8 个关键知识点或亮点，每个要点用一句话说清楚。
+# 任务
+你是视频内容分析师。请根据以上标题和简介，详细推断并描述视频可能涉及的核心内容与价值。
 
-请按以下格式输出（不要用 markdown 代码块）：
+# 规则
+1. 禁止使用"本视频介绍了""总而言之"等废话，直接输出内容。
+2. 尽可能详细地展开，覆盖潜在话题、观点方向、受众价值。
+3. 每个要点给出具体推断，而不是笼统概括。
 
-📌 视频摘要
-（2-3句话的摘要）
-
-🔑 核心要点
-1. 要点一
-2. 要点二
-3. 要点三
-...
-
-## 字幕内容
-{subtitle_text}"""
+# 输出格式（严格遵守 Markdown）
+- 总览用一段或多段普通文字，不用标题。
+- 各板块用 `## 板块名` 分隔（如 ## 内容方向、## 目标受众、## 核心价值）。
+- 板块下的每条要点用 `- **关键词**：具体说明` 格式，关键词加粗后跟冒号和详细描述。
+- 板块之间用 `---` 分隔线隔开。"""
 
 
 def _patch_ssl():
@@ -72,86 +105,260 @@ def _patch_ssl():
 _patch_ssl()
 
 
-def extract_bilibili_subtitles(url: str, max_chars: int = 8000) -> Optional[str]:
-    """
-    通过 B站官方 API 直接获取字幕（绕过 yt-dlp）
-    B站字幕格式为 JSON，body 数组中每项有 content 字段
-    """
-    import re
-    import json
-    import urllib.request
+# ── 字幕时间轴解析工具 ──────────────────────────────────────────────
 
-    # 从 URL 提取 BV 号
-    match = re.search(r"(BV[\w]+)", url)
-    if not match:
-        return None
-    bvid = match.group(1)
+def _time_to_seconds(time_str: str) -> float:
+    """HH:MM:SS.mmm → 秒数"""
+    parts = time_str.split(":")
+    return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://www.bilibili.com/",
+
+def _parse_bvid(url: str) -> Optional[str]:
+    m = re.search(r"(BV[a-zA-Z0-9]+)", url)
+    return m.group(1) if m else None
+
+
+def _parse_vtt(filepath: str) -> list[dict]:
+    """解析 VTT 字幕文件 → [{start, end, text}, ...]"""
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    segments = []
+    blocks = re.split(r"\n\n+", content)
+    time_pattern = re.compile(
+        r"(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})"
+    )
+
+    seen = set()
+    for block in blocks:
+        lines = block.strip().split("\n")
+        time_match = None
+        text_lines = []
+        for line in lines:
+            m = time_pattern.search(line)
+            if m:
+                time_match = m
+            elif time_match and line.strip() and not line.strip().isdigit():
+                clean = re.sub(r"<[^>]+>", "", line.strip())
+                if clean:
+                    text_lines.append(clean)
+
+        if time_match and text_lines:
+            text = " ".join(text_lines)
+            if text in seen:
+                continue
+            seen.add(text)
+            segments.append({
+                "start": round(_time_to_seconds(time_match.group(1)), 2),
+                "end": round(_time_to_seconds(time_match.group(2)), 2),
+                "text": text,
+            })
+
+    return segments
+
+
+# ── 字幕提取（优先官方 API，兜底 yt-dlp + VTT 解析）────────────────
+
+def extract_subtitles_segments(url: str, max_chars: int = 8000) -> dict:
+    """
+    提取带时间轴的视频字幕，返回:
+    {
+        "has_subtitle": bool,
+        "language": str,
+        "subtitle_type": "manual" | "auto" | "none",
+        "segments": [{"start": float, "end": float, "text": str}, ...],
+        "full_text": str
+    }
+    """
+    empty = {
+        "has_subtitle": False, "language": "", "subtitle_type": "none",
+        "segments": [], "full_text": "",
+    }
+
+    # ── B站专用 ──
+    if is_bilibili_url(url):
+        result = _extract_bilibili_segments(url, max_chars)
+        if result["has_subtitle"]:
+            return result
+        return empty
+
+    # ── 其他平台：yt-dlp 下载 VTT ──
+    opts = {
+        "quiet": True, "no_warnings": True, "noplaylist": True,
+        "writesubtitles": True, "writeautomaticsub": True,
+        "subtitleslangs": ["zh-Hans", "zh", "zh-CN", "zh-TW", "en", "ja", "ko"],
+        "skip_download": True, "socket_timeout": 30,
+        "nocheckcertificate": True, "legacy_server_connect": True, "proxy": "",
     }
 
     try:
-        # 1. 获取 cid
-        view_url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
-        req = urllib.request.Request(view_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        vid_data = data.get("data", {})
-        cid = vid_data.get("cid")
-        pages = vid_data.get("pages", [])
-        if not cid and pages:
-            cid = pages[0].get("cid")
-        if not cid:
-            return None
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            info = ydl.sanitize_info(info)
+    except Exception as e:
+        logger.warning(f"提取视频信息失败: {e}")
+        return empty
 
-        # 2. 获取字幕列表
-        player_url = f"https://api.bilibili.com/x/player/v2?bvid={bvid}&cid={cid}"
-        req2 = urllib.request.Request(player_url, headers=headers)
-        with urllib.request.urlopen(req2, timeout=15) as resp:
-            pdata = json.loads(resp.read().decode("utf-8"))
+    if not info:
+        return empty
 
-        subs = pdata.get("data", {}).get("subtitle", {}).get("subtitles", [])
-        if not subs:
-            return None
+    subtitles = info.get("subtitles", {}) or {}
+    auto_subs = info.get("automatic_captions", {}) or {}
+    subtitles = {k: v for k, v in subtitles.items() if k != "danmaku"}
 
-        # 优先选中文，其次第一个
-        subtitle_url = None
-        for s in subs:
-            u = s.get("subtitle_url", "")
-            if s.get("lan") in ("zh-Hans", "zh-CN", "zh") and u:
-                subtitle_url = u
+    preferred = ["zh-Hans", "zh", "zh-CN", "en", "ja", "ko"]
+    lang, sub_type = None, None
+
+    # 优先人工字幕
+    for l in preferred:
+        if l in subtitles:
+            lang, sub_type = l, "manual"
+            break
+    # 其次自动字幕
+    if not lang:
+        for l in preferred:
+            if l in auto_subs:
+                lang, sub_type = l, "auto"
                 break
-        if not subtitle_url:
-            subtitle_url = subs[0].get("subtitle_url", "")
+    # 任意兜底
+    if not lang:
+        for l in subtitles:
+            lang, sub_type = l, "manual"
+            break
+    if not lang:
+        for l in auto_subs:
+            lang, sub_type = l, "auto"
+            break
 
-        if not subtitle_url:
-            return None
-        if subtitle_url.startswith("//"):
-            subtitle_url = "https:" + subtitle_url
+    if not lang:
+        return empty
 
-        # 3. 下载并解析字幕
-        req3 = urllib.request.Request(subtitle_url, headers=headers)
-        with urllib.request.urlopen(req3, timeout=15) as resp:
-            raw = resp.read().decode("utf-8-sig", errors="ignore")
+    # 下载 VTT 并解析
+    with tempfile.TemporaryDirectory() as tmp:
+        vtt_opts = {
+            "quiet": True, "no_warnings": True, "noplaylist": True,
+            "skip_download": True,
+            "writesubtitles": sub_type == "manual",
+            "writeautomaticsub": sub_type == "auto",
+            "subtitleslangs": [lang], "subtitlesformat": "vtt",
+            "outtmpl": os.path.join(tmp, "sub"),
+        }
+        try:
+            with yt_dlp.YoutubeDL(vtt_opts) as ydl:
+                ydl.download([url])
+        except Exception:
+            return empty
 
-        parsed = json.loads(raw)
-        body = parsed.get("body", [])
-        lines = []
+        vtt_files = [f for f in os.listdir(tmp) if f.endswith(".vtt")]
+        if not vtt_files:
+            return empty
+
+        segments = _parse_vtt(os.path.join(tmp, vtt_files[0]))
+        full_text = " ".join(s["text"] for s in segments)
+        if len(full_text) > max_chars:
+            full_text = full_text[:max_chars]
+
+        return {
+            "has_subtitle": True, "language": lang, "subtitle_type": sub_type,
+            "segments": segments, "full_text": full_text,
+        }
+
+
+def _extract_bilibili_segments(url: str, max_chars: int = 8000) -> dict:
+    """B站 dm/view API → 带时间轴的字幕分段"""
+    empty = {
+        "has_subtitle": False, "language": "", "subtitle_type": "none",
+        "segments": [], "full_text": "",
+    }
+    try:
+        bvid = _parse_bvid(url)
+        if not bvid:
+            return empty
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": f"https://www.bilibili.com/video/{bvid}",
+        }
+
+        # 获取 aid + cid
+        view_url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+        view_req = urllib.request.Request(view_url, headers=headers)
+        with urllib.request.urlopen(view_req, timeout=15) as resp:
+            view_data = json.loads(resp.read().decode("utf-8")).get("data", {})
+        aid = view_data.get("aid")
+        cid = view_data.get("cid") or (view_data.get("pages", [{}])[0].get("cid"))
+        if not aid or not cid:
+            return empty
+
+        # 获取字幕列表
+        dm_url = f"https://api.bilibili.com/x/v2/dm/view?aid={aid}&oid={cid}&type=1"
+        dm_req = urllib.request.Request(dm_url, headers=headers)
+        with urllib.request.urlopen(dm_req, timeout=15) as resp:
+            dm_data = json.loads(resp.read().decode("utf-8")).get("data", {})
+        subtitle_list = dm_data.get("subtitle", {}).get("subtitles", [])
+
+        if not subtitle_list:
+            return empty
+
+        # 选最佳语言
+        best = subtitle_list[0]
+        for s in subtitle_list:
+            if s.get("lan", "") in ("zh-Hans", "zh-CN", "zh"):
+                best = s
+                break
+
+        sub_type = "auto" if best.get("lan", "").startswith("ai-") else "manual"
+        sub_url = best.get("subtitle_url", "")
+        if sub_url.startswith("//"):
+            sub_url = "https:" + sub_url
+        if not sub_url:
+            return empty
+
+        # 下载并解析字幕 JSON
+        sub_req = urllib.request.Request(sub_url, headers=headers)
+        with urllib.request.urlopen(sub_req, timeout=15) as resp:
+            sub_json = json.loads(resp.read().decode("utf-8-sig", errors="ignore"))
+        body = sub_json.get("body", [])
+
+        segments = []
         for item in body:
             content = item.get("content", "").strip()
-            if content:
-                lines.append(content)
+            if not content:
+                continue
+            segments.append({
+                "start": round(item.get("from", 0), 2),
+                "end": round(item.get("to", 0), 2),
+                "text": content,
+            })
 
-        text = " ".join(lines)
-        if len(text) > max_chars:
-            text = text[:max_chars]
-        return text if len(text.strip()) > 20 else None
+        full_text = " ".join(s["text"] for s in segments)
+        if len(full_text) > max_chars:
+            full_text = full_text[:max_chars]
 
+        return {
+            "has_subtitle": True,
+            "language": best.get("lan", "zh"),
+            "subtitle_type": sub_type,
+            "segments": segments,
+            "full_text": full_text,
+        }
     except Exception as e:
-        logger.warning(f"B站 API 获取字幕失败: {e}")
-        return None
+        logger.warning(f"B站字幕提取失败: {e}")
+        return empty
+
+
+# ── 兼容旧接口：纯文本提取 ──────────────────────────────────────────
+
+def extract_bilibili_subtitles(url: str, max_chars: int = 8000) -> Optional[str]:
+    """兼容旧接口：仅返回纯文本"""
+    result = _extract_bilibili_segments(url, max_chars)
+    return result["full_text"] if result["has_subtitle"] else None
+
+
+def extract_subtitles(url: str, max_chars: int = 8000) -> Optional[str]:
+    """兼容旧接口：仅返回纯文本"""
+    result = extract_subtitles_segments(url, max_chars)
+    return result["full_text"] if result["has_subtitle"] else None
 
 
 def is_bilibili_url(url: str) -> bool:
@@ -229,205 +436,10 @@ def extract_video_data(url: str, max_chars: int = 8000) -> dict:
         "description": (info.get("description", "") or "")[:500],
     }
 
-    # 字幕提取（人工优先）
-    subtitles = info.get("subtitles", {}) or {}
-    auto_subtitles = info.get("automatic_captions", {}) or {}
-    preferred_langs = ["zh-Hans", "zh", "zh-CN", "zh-TW", "en", "ja", "ko"]
-    subtitle_text = None
-
-    for lang in preferred_langs:
-        if lang in subtitles and subtitles[lang]:
-            subtitle_text = _fetch_and_parse_subtitle(subtitles[lang])
-            if subtitle_text:
-                break
-        if lang in auto_subtitles and auto_subtitles[lang]:
-            subtitle_text = _fetch_and_parse_subtitle(auto_subtitles[lang])
-            if subtitle_text:
-                break
-
-    if not subtitle_text:
-        for lang, subs in {**subtitles, **auto_subtitles}.items():
-            if subs:
-                subtitle_text = _fetch_and_parse_subtitle(subs)
-                if subtitle_text:
-                    break
-
-    if subtitle_text and len(subtitle_text) > max_chars:
-        subtitle_text = subtitle_text[:max_chars]
-
-    meta["subtitle_text"] = subtitle_text or ""
+    # 字幕提取（使用新的 extract_subtitles_segments，支持时间轴）
+    sub_result = extract_subtitles_segments(url, max_chars)
+    meta["subtitle_text"] = sub_result.get("full_text", "") or ""
     return meta
-
-
-def extract_subtitles(url: str, max_chars: int = 8000) -> Optional[str]:
-    """
-    从视频中提取字幕文本
-    B站：直接调 B站 API
-    其他平台：通过 yt-dlp 提取
-    """
-    # B站专用
-    if is_bilibili_url(url):
-        text = extract_bilibili_subtitles(url, max_chars)
-        if text:
-            logger.info(f"B站 API 字幕提取成功: {len(text)} 字符")
-            return text
-
-    # 其他平台：yt-dlp
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "writesubtitles": True,
-        "writeautomaticsub": True,
-        "subtitleslangs": ["zh-Hans", "zh", "zh-CN", "zh-TW", "en", "ja", "ko"],
-        "skip_download": True,
-        "socket_timeout": 30,
-        "nocheckcertificate": True,
-        "legacy_server_connect": True,
-        "proxy": "",
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            info = ydl.sanitize_info(info)
-    except Exception as e:
-        logger.warning(f"提取视频信息失败: {e}")
-        return None
-
-    if not info:
-        return None
-
-    # 获取字幕（人工优先）
-    subtitles = info.get("subtitles", {}) or {}
-    auto_subtitles = info.get("automatic_captions", {}) or {}
-
-    # 优先中文
-    preferred_langs = ["zh-Hans", "zh", "zh-CN", "zh-TW", "en", "ja", "ko"]
-
-    subtitle_text = None
-
-    for lang in preferred_langs:
-        # 先查人工字幕
-        if lang in subtitles and subtitles[lang]:
-            subtitle_text = _fetch_and_parse_subtitle(subtitles[lang])
-            if subtitle_text:
-                logger.info(f"使用人工字幕: {lang}")
-                break
-
-        # 再查自动字幕
-        if lang in auto_subtitles and auto_subtitles[lang]:
-            subtitle_text = _fetch_and_parse_subtitle(auto_subtitles[lang])
-            if subtitle_text:
-                logger.info(f"使用自动字幕: {lang}")
-                break
-
-    if not subtitle_text:
-        # 任意语言兜底
-        for lang, subs in {**subtitles, **auto_subtitles}.items():
-            if subs:
-                subtitle_text = _fetch_and_parse_subtitle(subs)
-                if subtitle_text:
-                    logger.info(f"使用兜底字幕: {lang}")
-                    break
-
-    if subtitle_text and len(subtitle_text) > max_chars:
-        subtitle_text = subtitle_text[:max_chars]
-
-    return subtitle_text
-
-
-def _fetch_and_parse_subtitle(sub_list: list) -> Optional[str]:
-    """下载并解析字幕 JSON，返回纯文本"""
-    import json
-    import urllib.request
-
-    for sub in sub_list:
-        sub_url = sub.get("url", "")
-        if not sub_url:
-            continue
-
-        try:
-            req = urllib.request.Request(sub_url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            })
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                raw = resp.read().decode("utf-8-sig", errors="ignore")
-
-            # 尝试多种解析方式
-            text = _parse_subtitle_content(raw)
-            if text and len(text.strip()) > 20:
-                return text
-        except Exception:
-            continue
-
-    return None
-
-
-def _parse_subtitle_content(raw: str) -> Optional[str]:
-    """解析字幕内容，支持 srt/vtt/json 格式"""
-    import json
-    import re
-
-    # 1. JSON 格式（常见于 B站、YouTube 自动字幕）
-    try:
-        data = json.loads(raw)
-        lines = []
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict):
-                    segs = item.get("segs") or item.get("body") or []
-                    if isinstance(segs, list):
-                        for seg in segs:
-                            if isinstance(seg, dict):
-                                text = seg.get("utf8", "") or seg.get("content", "")
-                                if text:
-                                    lines.append(text.strip())
-                    content = item.get("content", "") or item.get("text", "")
-                    if content and not lines:
-                        lines.append(content.strip())
-        elif isinstance(data, dict):
-            body = data.get("body", [])
-            if isinstance(body, list):
-                for item in body:
-                    if isinstance(item, dict):
-                        content = item.get("content", "") or item.get("text", "")
-                        if content:
-                            lines.append(content.strip())
-        if lines:
-            return " ".join(lines)
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    # 2. SRT 格式
-    srt_match = re.search(r"\d+\n\d{2}:\d{2}:\d{2}[.,]\d{3} -->", raw)
-    if srt_match:
-        blocks = re.split(r"\n\d+\n", raw)
-        lines = []
-        for block in blocks:
-            cleaned = re.sub(r"\d{2}:\d{2}:\d{2}[.,]\d{3} --> \d{2}:\d{2}:\d{2}[.,]\d{3}.*", "", block)
-            text = re.sub(r"<[^>]+>", "", cleaned).strip()
-            if text and not text.isdigit():
-                lines.append(text)
-        if lines:
-            return " ".join(lines)
-
-    # 3. VTT 格式
-    vtt_match = re.match(r"^(WEBVTT|NOTE)", raw.strip())
-    if vtt_match or " --> " in raw:
-        lines = []
-        raws = raw.split("\n")
-        for r in raws:
-            r = r.strip()
-            if not r or " --> " in r or r.startswith("WEBVTT") or r.startswith("NOTE") or r.startswith("Kind:") or r.startswith("Language:"):
-                continue
-            r = re.sub(r"<[^>]+>", "", r)
-            if r and not r.isdigit():
-                lines.append(r)
-        if lines:
-            return " ".join(lines)
-
-    return None
 
 
 def summarize_with_deepseek(prompt: str, api_key: Optional[str] = None) -> Generator[str, None, None]:
@@ -445,7 +457,7 @@ def summarize_with_deepseek(prompt: str, api_key: Optional[str] = None) -> Gener
         stream = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "你是一个专业的视频内容总结助手，输出简洁清晰。"},
+                {"role": "system", "content": "用最少字数提供最高密度信息，直接输出核心内容，禁用废话和过渡词。"},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.7,
@@ -462,25 +474,17 @@ def summarize_with_deepseek(prompt: str, api_key: Optional[str] = None) -> Gener
         yield f"\n\n总结生成失败：{str(e)}"
 
 
-TEXT_SUMMARY_PROMPT = """你是一个专业的视频内容总结助手。请根据以下字幕内容，生成一份全面、有洞察力的总结。
-
+TEXT_SUMMARY_PROMPT = """# 字幕内容
 {subtitle_text}
 
-## 要求
-1. **视频摘要**：用 2-3 句话概括核心内容和主题。
-2. **核心要点**：列出 5-8 个关键知识点或亮点，每个要点用一句话说清楚。
+# 任务
+你是视频内容分析师。请详细总结以上字幕内容，帮助读者快速掌握视频的全部有价值信息。
 
-请按以下格式输出（不要用 markdown 代码块）：
-
-📌 视频摘要
-（2-3句话的摘要）
-
-🔑 核心要点
-1. 要点一
-2. 要点二
-3. 要点三
-...
-"""
+# 规则
+1. 禁止使用"本视频介绍了""总而言之"等废话，直接输出内容。
+2. 覆盖视频涉及的所有重要话题、观点、数据、案例，不要只挑一两个点。
+3. 每个要点给出具体信息，而不是笼统概括。
+4. 输出格式建议（可自由发挥）：先一段总览，再分点详述，最后可加一句点睛之笔。"""
 
 
 def summarize_text(
@@ -496,21 +500,35 @@ def summarize_text(
 
     前端应先通过 /api/transcribe 获取字幕，再将字幕文本传入此函数。
     """
-    # 组装提示词（优先使用提供的元数据）
-    header = ""
-    if title:
-        header += f"- 标题：{title}\n"
-    if uploader:
-        header += f"- UP主/作者：{uploader}\n"
-    if description:
-        header += f"- 简介：{description}\n"
+    # 字幕为空但有标题时，降级为基于标题/简介总结
+    is_no_sub = not subtitle_text or len(subtitle_text.strip()) < 20
 
-    if header:
-        prompt = TEXT_SUMMARY_PROMPT.format(
-            subtitle_text=f"## 视频基本信息\n{header}\n## 字幕内容\n{subtitle_text}"
+    # 组装提示词
+    if is_no_sub and title:
+        # 无字幕：用 NO_SUB_SUMMARY_PROMPT
+        prompt = NO_SUB_SUMMARY_PROMPT.format(
+            title=title,
+            uploader=uploader or "未知作者",
+            description=description or "暂无简介",
         )
+    elif not is_no_sub:
+        # 有字幕：拼接元数据前缀
+        parts = []
+        if title:
+            parts.append(f"标题：{title}")
+        if uploader:
+            parts.append(f"UP主：{uploader}")
+        if description:
+            parts.append(f"简介：{description}")
+        if parts:
+            parts.append(f"字幕：{subtitle_text}")
+            combined = "\n".join(parts)
+        else:
+            combined = subtitle_text
+        prompt = TEXT_SUMMARY_PROMPT.format(subtitle_text=combined)
     else:
-        prompt = TEXT_SUMMARY_PROMPT.format(subtitle_text=subtitle_text)
+        yield "错误：未提供字幕或视频标题，无法生成总结。"
+        return
 
     for chunk in summarize_with_deepseek(prompt, api_key):
         yield chunk
@@ -543,6 +561,11 @@ def download_audio(url: str) -> Optional[str]:
             "nocheckcertificate": True,
             "legacy_server_connect": True,
             "proxy": "",
+            # B站 CDN 需要 Referer，否则 8082 端口连接被拒
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Referer": "https://www.bilibili.com/",
+            },
             # 指定 ffmpeg 路径
             "ffmpeg_location": _find_ffmpeg(),
         }
@@ -620,11 +643,13 @@ def transcribe_audio(audio_path: str, max_chars: int = 8000) -> Optional[str]:
         if result and len(result.strip()) > 20:
             logger.info(f"faster-whisper 转录完成: {len(result)} 字符")
             return result
+        else:
+            logger.warning(f"faster-whisper 转录结果过短或为空（{len(result)} 字符），尝试回退")
 
     except ImportError:
         logger.info("faster-whisper 未安装，尝试 openai-whisper")
     except Exception as e:
-        logger.warning(f"faster-whisper 转录失败: {e}")
+        logger.warning(f"faster-whisper 转录失败: {e}，尝试回退")
 
     # 回退到 openai-whisper
     try:
@@ -651,27 +676,48 @@ def transcribe_audio(audio_path: str, max_chars: int = 8000) -> Optional[str]:
 
 def parse_video(url: str) -> dict:
     """
-    纯解析：提取视频元数据 + 字幕（含 ASR 兜底）。
+    纯解析：提取视频元数据 + 带时间轴的字幕（含 ASR 兜底）。
     不调用任何大模型，只返回结构化数据。
 
-    返回 {"title": str, "subtitles": str}
+    返回 {"title": str, "subtitles": str, "segments": list, "language": str, "subtitle_type": str}
     """
+    logger.info(f"parse_video: 开始解析 {url[:60]}")
+
+    # 提取元数据
     data = extract_video_data(url)
-    subtitle_text = data.get("subtitle_text", "")
+    title = data.get("title", "")
+    logger.info(f"parse_video: 标题={title[:50]}")
+
+    # 提取带时间轴的字幕
+    sub_result = extract_subtitles_segments(url)
+    has_sub = sub_result.get("has_subtitle", False)
+    segments = sub_result.get("segments", [])
+    subtitle_text = sub_result.get("full_text", "")
+    logger.info(f"parse_video: has_subtitle={has_sub}, segments={len(segments)}, text={len(subtitle_text)}")
 
     if not subtitle_text or len(subtitle_text.strip()) < 20:
-        # 无字幕 → 下载音频走 Whisper ASR
+        logger.info("parse_video: 无字幕，尝试下载音频走 ASR...")
         audio_path = download_audio(url)
+        logger.info(f"parse_video: download_audio 返回 {audio_path}")
         if audio_path:
             subtitle_text = transcribe_audio(audio_path) or ""
+            logger.info(f"parse_video: transcribe_audio 返回 {len(subtitle_text)} 字符")
             try:
                 os.remove(audio_path)
             except Exception:
                 pass
+        else:
+            logger.warning("parse_video: 音频下载失败，无法走 ASR")
+    else:
+        logger.info(f"parse_video: 已有字幕，跳过 ASR")
 
+    logger.info(f"parse_video: 最终 subtitle={len(subtitle_text)} 字符, segments={len(segments)}")
     return {
-        "title": data.get("title", ""),
+        "title": title,
         "subtitles": subtitle_text or "",
+        "segments": segments,
+        "language": sub_result.get("language", ""),
+        "subtitle_type": sub_result.get("subtitle_type", "none"),
     }
 
 
@@ -712,34 +758,48 @@ def summarize_video(url: str, api_key: Optional[str] = None) -> Generator[dict, 
             pass
 
         if not subtitle_text or len(subtitle_text.strip()) < 20:
-            subtitle_text = "（注：当前视频无可用字幕或识别不到语音，请仅根据上述提供的标题和简介，推测并总结视频可能的核心内容。）"
+            subtitle_text = ""
             yield {
                 "status": "extracted",
                 "message": "未提取到有效语音，将直接根据视频标题和简介进行智能总结...",
-                "subtitles": ""  # 🔴 新增：确保前端状态被清空或更新
+                "subtitles": ""
             }
         else:
             yield {
                 "status": "extracted",
                 "message": f"语音识别完成（{len(subtitle_text)} 字符），正在生成 AI 总结...",
-                "subtitles": subtitle_text  # 🔴 新增：将 Whisper 识别的字幕传给前端
+                "subtitles": subtitle_text
             }
     else:
         yield {
             "status": "extracted",
             "message": f"字幕提取完成（{len(subtitle_text)} 字符），正在生成 AI 总结...",
-            "subtitles": subtitle_text  # 🔴 新增：将官方提取的字幕传给前端
+            "subtitles": subtitle_text
         }
 
-    # 阶段3：组装元数据 + 字幕 → 完整 Prompt
+    # 阶段3：组装元数据 + 字幕 → 完整 Prompt（无字幕时使用简化版）
     yield {"status": "summarizing", "message": "AI 正在分析视频内容..."}
 
-    prompt = SUMMARY_PROMPT.format(
-        title=data.get("title", "未知标题"),
-        uploader=data.get("uploader", "未知作者"),
-        description=data.get("description", "暂无简介"),
-        subtitle_text=subtitle_text,
-    )
+    if subtitle_text and len(subtitle_text.strip()) >= 20:
+        # 有字幕：将元数据作为前缀和字幕一起传入
+        meta_prefix = ""
+        t = data.get("title", "")
+        u = data.get("uploader", "")
+        d = data.get("description", "")
+        if t:
+            meta_prefix += f"标题：{t}\n"
+        if u:
+            meta_prefix += f"UP主：{u}\n"
+        if d:
+            meta_prefix += f"简介：{d}\n"
+        full_input = meta_prefix + subtitle_text if meta_prefix else subtitle_text
+        prompt = SUMMARY_PROMPT.format(subtitle_text=full_input)
+    else:
+        prompt = NO_SUB_SUMMARY_PROMPT.format(
+            title=data.get("title", "未知标题"),
+            uploader=data.get("uploader", "未知作者"),
+            description=data.get("description", "暂无简介"),
+        )
 
     for text_chunk in summarize_with_deepseek(prompt, api_key):
         yield {"status": "streaming", "content": text_chunk}
@@ -759,7 +819,7 @@ MINDMAP_PROMPT = """你是一个专业的知识结构提取助手。请根据以
 1. 第一行必须是 `# <视频核心主题>`（用 5-15 字概括）。
 2. 用 `##` 表示一级分类（3-6 个），`-` 表示具体要点。
 3. 子要点用 4 个空格缩进的 `-`，形成 `##` → `-` → `    -` 三级结构。
-4. **绝对禁止**输出任何解释、前言、客套话、代码块标记（\`\`\`）、HTML 标签。
+4. **绝对禁止**输出任何解释、前言、客套话、代码块标记（```）、HTML 标签。
 5. **绝对禁止**输出"以下是..."、"根据内容..."等引导语。直接从 `#` 开始。
 6. 每个要点 ≤ 25 字，一行一句。
 7. 如果内容不足以提炼，至少输出 1 个 `#` 标题 + 2 个 `##` 分类。

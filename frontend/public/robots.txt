@@ -1,0 +1,10 @@
+# https://your-domain.com/robots.txt
+# 允许所有搜索引擎爬取
+User-agent: *
+Allow: /
+
+# 禁止爬取 API 路径（如果有的话，由后端控制）
+Disallow: /api/
+
+# Sitemap 位置（替换为你的实际域名）
+Sitemap: https://your-domain.com/sitemap.xml
