@@ -191,9 +191,10 @@ def _bilibili_get_cid(bvid: str) -> Optional[int]:
 
 # ── B站音频 URL 获取（Wbi 签名）──
 
-def _bilibili_get_audio_url_wbi(bvid: str, cid: int) -> Optional[str]:
+def _bilibili_get_audio_url_wbi(bvid: str, cid: int) -> Optional[List[str]]:
     """
-    通过 Wbi 签名的 playurl API 获取 DASH 音频直链。
+    通过 Wbi 签名的 playurl API 获取 DASH 音频直链列表。
+    返回 [主URL, 备用URL1, 备用URL2, ...] 或 None。
     fnval=4048 启用 DASH + 杜比 + 8K 等所有流格式。
     """
     params = _wbi_sign({
@@ -220,14 +221,36 @@ def _bilibili_get_audio_url_wbi(bvid: str, cid: int) -> Optional[str]:
         audios = dash.get("audio", [])
         if audios:
             audios.sort(key=lambda a: a.get("bandwidth", 0))
-            url = audios[0].get("base_url") or audios[0].get("baseUrl")
-            logger.info(f"✅ Wbi API 获取到音频 URL (bandwidth={audios[0].get('bandwidth')})")
-            return url
+            urls = []
+            for audio in audios:
+                # 主 URL
+                main_url = audio.get("base_url") or audio.get("baseUrl")
+                if main_url:
+                    urls.append(main_url)
+                # 备用 URL 列表（B站 CDN 不同节点）
+                backups = audio.get("backup_url") or audio.get("backupUrl") or []
+                if isinstance(backups, str):
+                    backups = [backups]
+                for bu in backups:
+                    if bu and bu not in urls:
+                        urls.append(bu)
+                # backup_urls 列表
+                backup_list = audio.get("backup_urls") or audio.get("backupUrls") or []
+                for bu in backup_list:
+                    if bu and bu not in urls:
+                        urls.append(bu)
+            if urls:
+                logger.info(f"✅ Wbi API 获取到 {len(urls)} 个音频 URL (bandwidth={audios[0].get('bandwidth')})")
+                return urls
 
         # 回退：durl
         durl = data.get("data", {}).get("durl", [])
         if durl:
-            return durl[0].get("url")
+            urls = [d.get("url") for d in durl if d.get("url")]
+            backups = [d.get("backup_url") for d in durl if d.get("backup_url")]
+            all_urls = urls + backups
+            if all_urls:
+                return all_urls
 
         logger.error(f"playurl 响应无 dash 也无 durl: {json.dumps(data, ensure_ascii=False)[:500]}")
         return None
@@ -334,22 +357,22 @@ def _bilibili_get_audio_url_playwright(url: str, bvid: str) -> Optional[str]:
     return None
 
 
-def _bilibili_get_audio_url(bvid: str, cid: int, original_url: str = "") -> Optional[str]:
+def _bilibili_get_audio_url(bvid: str, cid: int, original_url: str = "") -> Optional[List[str]]:
     """
-    获取 B站音频流 URL（多层回退）：
-    1. Wbi 签名 API
+    获取 B站音频流 URL 列表（多层回退）：
+    1. Wbi 签名 API（返回主 URL + 备用 URL）
     2. Playwright 网络拦截
     """
     # 方案1：Wbi 签名 API
-    url = _bilibili_get_audio_url_wbi(bvid, cid)
-    if url:
-        return url
+    urls = _bilibili_get_audio_url_wbi(bvid, cid)
+    if urls:
+        return urls
 
     # 方案2：Playwright 备用
     logger.info("Wbi API 失败，尝试 Playwright 备用方案...")
     url = _bilibili_get_audio_url_playwright(original_url or f"https://www.bilibili.com/video/{bvid}", bvid)
     if url:
-        return url
+        return [url]
 
     return None
 
@@ -397,21 +420,18 @@ def _bilibili_get_subtitles(bvid: str, cid: int) -> Optional[List[Dict]]:
 
 def _bilibili_download_audio(bvid: str, cid: int, output_dir: str,
                               original_url: str = "") -> str:
-    """下载 B站音频流（Wbi API → Playwright 双重回退）"""
-    audio_url = _bilibili_get_audio_url(bvid, cid, original_url)
-    if not audio_url:
+    """下载 B站音频流（Wbi API 多 URL 回退 → Playwright 备用）"""
+    audio_urls = _bilibili_get_audio_url(bvid, cid, original_url)
+    if not audio_urls:
         raise RuntimeError(
             "无法获取 B站音频流地址。\n\n"
             "可能原因：\n"
             "1. B站 API 要求 Wbi 签名（已尝试自动签名）\n"
             "2. Playwright 备用方案也未成功\n"
-            "3. 视频需要大会员或已失效\n\n"
-            "建议：检查后端终端日志中的 API 响应详情"
+            "3. 视频需要大会员或已失效"
         )
 
     out_path = os.path.join(output_dir, f"{bvid}_{cid}.m4s")
-    logger.info(f"下载 B站音频: {audio_url[:100]}...")
-
     headers = {"User-Agent": UA, "Referer": "https://www.bilibili.com/"}
 
     # 绕过系统代理直连
@@ -421,23 +441,36 @@ def _bilibili_download_audio(bvid: str, cid: int, output_dir: str,
         if v is not None:
             proxy_backup[k] = v
 
+    last_error = None
     try:
-        resp = requests.get(
-            audio_url, headers=headers, timeout=120, stream=True,
-            verify=False,  # B站 CDN 边缘节点 SSL 证书不兼容
-            proxies={"http": None, "https": None},  # 显式禁用代理
-        )
-        resp.raise_for_status()
-        with open(out_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
+        # 依次尝试所有 URL（主 URL + 备用 CDN 节点）
+        for i, audio_url in enumerate(audio_urls):
+            try:
+                logger.info(f"下载 B站音频 [{i+1}/{len(audio_urls)}]: {audio_url[:100]}...")
+                resp = requests.get(
+                    audio_url, headers=headers, timeout=30, stream=True,
+                    verify=False,
+                    proxies={"http": None, "https": None},
+                )
+                resp.raise_for_status()
+                with open(out_path, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                size_mb = os.path.getsize(out_path) / 1024 / 1024
+                logger.info(f"✅ B站音频下载成功 ({size_mb:.1f} MB) [URL #{i+1}]")
+                return out_path
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"B站 CDN #{i+1} 失败 ({last_error[:100]}), 尝试下一个...")
+                # 清理可能的不完整文件
+                if os.path.exists(out_path):
+                    os.remove(out_path)
+                continue
+
+        raise RuntimeError(f"所有 CDN 节点均下载失败: {last_error}")
     finally:
         for k, v in proxy_backup.items():
             os.environ[k] = v
-
-    size_mb = os.path.getsize(out_path) / 1024 / 1024
-    logger.info(f"✅ B站音频下载成功 ({size_mb:.1f} MB)")
-    return out_path
 
 
 # ═══════════════════════════════════════════════════════════════════════

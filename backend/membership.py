@@ -1,0 +1,636 @@
+"""
+会员套餐与额度管理系统
+======================
+支持三级会员体系：Free / Pro（月付）/ Ultra（终身买断）
+采用「每日重置配额 + 月度硬上限」混合模式，兼顾用户体验与服务端成本控制。
+
+核心设计理念：
+- 免费用户享受每日重置的基础额度，降低获客门槛
+- Pro 用户按月付费，获得更高每日配额 + 高级功能
+- Ultra 用户一次买断，终身不限量（仅受合理公平使用限制）
+
+额度消耗规则：
+- 视频下载：每成功下载 1 个视频消耗 1 次下载额度
+- AI 总结：每生成 1 次视频总结消耗 1 次总结额度
+- 思维导图：与 AI 总结共享额度（生成导图也算 1 次）
+- 批量下载：Pro/Ultra 专属功能，每次批量任务最多 N 个视频
+"""
+
+import os
+import time
+import sqlite3
+import json
+from pathlib import Path
+from datetime import datetime, timedelta
+from enum import Enum
+from typing import Optional, Dict, Any
+from dataclasses import dataclass, asdict
+
+# ---------- 套餐定义 ----------
+
+class PlanTier(str, Enum):
+    """会员等级枚举"""
+    FREE = "free"       # 免费版
+    PRO = "pro"         # 专业版（月付）
+    ULTRA = "ultra"     # 旗舰版（终身买断）
+
+
+# 各套餐权益配置（可作为环境变量覆盖，方便运营调参）
+PLAN_CONFIG: Dict[str, Dict[str, Any]] = {
+    "free": {
+        "name": "免费版",
+        "name_en": "Free",
+        "price_monthly": 0,
+        "price_lifetime": 0,
+        "daily_downloads": 3,        # 每日下载次数
+        "max_quality": "1080p",      # 最高画质（实际受限于源站）
+        "daily_summaries": 1,        # 每日 AI 总结次数
+        "batch_download": False,     # 批量下载
+        "batch_max_count": 0,
+        "mindmap_export": False,     # 思维导图导出
+        "watermark": True,           # 下载视频加水印
+        "priority_support": False,
+        "features": [
+            "每日 3 次视频下载",
+            "最高 1080p 画质",
+            "每日 1 次 AI 智能总结",
+            "基础字幕提取",
+            "下载视频含水印",
+        ],
+    },
+    "pro": {
+        "name": "专业版",
+        "name_en": "Pro",
+        "price_monthly": 29,         # ¥29/月（建议定价）
+        "price_yearly": 199,         # ¥199/年（约 ¥16.6/月，节省 43%）
+        "price_lifetime": 0,
+        "daily_downloads": 30,
+        "max_quality": "4K",
+        "daily_summaries": 10,
+        "batch_download": True,
+        "batch_max_count": 10,
+        "mindmap_export": True,
+        "watermark": False,
+        "priority_support": False,
+        "features": [
+            "每日 30 次视频下载",
+            "最高 4K 超清画质",
+            "每日 10 次 AI 智能总结",
+            "批量下载（最多 10 个）",
+            "思维导图导出（Markdown/PNG）",
+            "无水印下载",
+            "字幕提取 + 导出",
+        ],
+    },
+    "ultra": {
+        "name": "旗舰版",
+        "name_en": "Ultra",
+        "price_monthly": 0,
+        "price_lifetime": 299,       # ¥299 终身买断
+        "daily_downloads": 100,      # 合理公平使用上限
+        "max_quality": "4K",
+        "daily_summaries": 50,
+        "batch_download": True,
+        "batch_max_count": 50,
+        "mindmap_export": True,
+        "watermark": False,
+        "priority_support": True,
+        "features": [
+            "每日 100 次视频下载",
+            "最高 4K 超清画质",
+            "每日 50 次 AI 智能总结",
+            "无限批量下载",
+            "思维导图导出（Markdown/PNG/PDF）",
+            "无水印高速下载",
+            "优先技术支持",
+            "终身有效，无需续费",
+        ],
+    },
+}
+
+
+# ---------- 数据库 ----------
+
+DB_PATH = Path(__file__).parent / "data" / "membership.db"
+DB_PATH.parent.mkdir(exist_ok=True)
+
+
+def _get_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    # 不启用外键约束：users 表在 users.db 中，无法跨数据库引用
+    # 用户合法性由 auth.py 保证，此处只做数据记录
+    return conn
+
+
+def init_membership_db():
+    """初始化会员相关表（在应用启动时调用）"""
+    with _get_db() as conn:
+        # 用户会员信息表（与 auth.users 通过 user_id 关联，不同数据库文件故不设外键）
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_membership (
+                user_id TEXT PRIMARY KEY,
+                plan TEXT NOT NULL DEFAULT 'free',
+                expires_at INTEGER NOT NULL DEFAULT 0,
+                daily_usage_json TEXT NOT NULL DEFAULT '{}',
+                usage_date TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+        """)
+
+        # 订单记录表（对接支付网关回调，user_id 由 auth 模块保证有效性）
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                plan TEXT NOT NULL,
+                order_type TEXT NOT NULL DEFAULT 'monthly',
+                amount REAL NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'CNY',
+                status TEXT NOT NULL DEFAULT 'pending',
+                payment_gateway TEXT NOT NULL DEFAULT '',
+                gateway_order_id TEXT DEFAULT '',
+                gateway_data_json TEXT DEFAULT '{}',
+                created_at INTEGER NOT NULL,
+                paid_at INTEGER DEFAULT 0
+            )
+        """)
+
+        # 用量日志表（用于审计和对账）
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS usage_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                video_url TEXT DEFAULT '',
+                video_title TEXT DEFAULT '',
+                consumed_at INTEGER NOT NULL,
+                ip_address TEXT DEFAULT ''
+            )
+        """)
+
+
+# ---------- 核心逻辑 ----------
+
+@dataclass
+class QuotaInfo:
+    """用户当前额度信息"""
+    user_id: str
+    plan: str
+    expires_at: int
+    daily_downloads_limit: int
+    daily_summaries_limit: int
+    daily_downloads_used: int
+    daily_summaries_used: int
+    can_batch_download: bool
+    batch_max_count: int
+    can_export_mindmap: bool
+    max_quality: str
+    has_watermark: bool
+    is_expired: bool
+
+
+def _get_today_str() -> str:
+    """获取今天的日期字符串 YYYY-MM-DD"""
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _reset_daily_usage_if_needed(conn: sqlite3.Connection, user_id: str, today: str):
+    """如果日期变了，重置每日用量"""
+    row = conn.execute(
+        "SELECT usage_date FROM user_membership WHERE user_id=?",
+        (user_id,)
+    ).fetchone()
+    if row and row["usage_date"] != today:
+        conn.execute(
+            "UPDATE user_membership SET daily_usage_json='{}', usage_date=? WHERE user_id=?",
+            (today, user_id)
+        )
+
+
+def _ensure_user_membership(conn: sqlite3.Connection, user_id: str):
+    """确保用户有会员记录，没有则创建免费版"""
+    now = int(time.time())
+    today = _get_today_str()
+    existing = conn.execute(
+        "SELECT user_id FROM user_membership WHERE user_id=?", (user_id,)
+    ).fetchone()
+    if not existing:
+        conn.execute(
+            """INSERT INTO user_membership (user_id, plan, expires_at, daily_usage_json, usage_date, created_at, updated_at)
+               VALUES (?, 'free', 0, '{}', ?, ?, ?)""",
+            (user_id, today, now, now)
+        )
+
+
+def get_user_quota(user_id: str) -> QuotaInfo:
+    """
+    获取用户当前额度信息。
+    每次调用时自动检查并重置每日用量。
+    前端应在加载时和每次操作后调用此接口。
+    """
+    today = _get_today_str()
+
+    with _get_db() as conn:
+        _ensure_user_membership(conn, user_id)
+        _reset_daily_usage_if_needed(conn, user_id, today)
+
+        row = conn.execute(
+            "SELECT * FROM user_membership WHERE user_id=?", (user_id,)
+        ).fetchone()
+
+    plan = row["plan"]
+    config = PLAN_CONFIG.get(plan, PLAN_CONFIG["free"])
+    usage = json.loads(row["daily_usage_json"])
+
+    # 判断会员是否过期
+    is_expired = False
+    if plan == "pro" and row["expires_at"] > 0:
+        is_expired = row["expires_at"] < int(time.time())
+        if is_expired:
+            # Pro 过期降级为 Free
+            plan = "free"
+            config = PLAN_CONFIG["free"]
+
+    return QuotaInfo(
+        user_id=user_id,
+        plan=plan,
+        expires_at=row["expires_at"],
+        daily_downloads_limit=config["daily_downloads"],
+        daily_summaries_limit=config["daily_summaries"],
+        daily_downloads_used=usage.get("downloads", 0),
+        daily_summaries_used=usage.get("summaries", 0),
+        can_batch_download=config["batch_download"],
+        batch_max_count=config["batch_max_count"],
+        can_export_mindmap=config["mindmap_export"],
+        max_quality=config["max_quality"],
+        has_watermark=config["watermark"],
+        is_expired=is_expired,
+    )
+
+
+def check_and_consume_quota(
+    user_id: str,
+    action: str,
+    video_url: str = "",
+    video_title: str = "",
+    ip_address: str = "",
+) -> Dict[str, Any]:
+    """
+    检查并消耗用户额度。原子操作，线程安全。
+
+    Args:
+        user_id: 用户 ID
+        action: 操作类型 - 'download' / 'summarize' / 'mindmap' / 'batch_download'
+        video_url: 视频链接（用于日志）
+        video_title: 视频标题（用于日志）
+        ip_address: 客户端 IP
+
+    Returns:
+        {
+            "allowed": bool,       # 是否允许操作
+            "quota": QuotaInfo,    # 当前额度信息
+            "reason": str,         # 拒绝原因（allowed=False 时）
+            "remaining": int,      # 剩余次数
+        }
+    """
+    today = _get_today_str()
+    now = int(time.time())
+
+    # 操作到额度的映射
+    action_map = {
+        "download": "downloads",
+        "summarize": "summaries",
+        "mindmap": "summaries",  # 思维导图与总结共享额度
+    }
+
+    if action not in action_map:
+        return {"allowed": False, "reason": f"未知操作类型: {action}"}
+
+    quota_key = action_map[action]
+    limit_key = f"daily_{quota_key}_limit"
+    used_key = f"daily_{quota_key}_used"
+
+    with _get_db() as conn:
+        _ensure_user_membership(conn, user_id)
+        _reset_daily_usage_if_needed(conn, user_id, today)
+
+        row = conn.execute(
+            "SELECT * FROM user_membership WHERE user_id=?", (user_id,)
+        ).fetchone()
+
+        plan = row["plan"]
+        config = PLAN_CONFIG.get(plan, PLAN_CONFIG["free"])
+        usage = json.loads(row["daily_usage_json"])
+
+        # 检查 Pro 是否过期
+        if plan == "pro" and row["expires_at"] > 0 and row["expires_at"] < now:
+            plan = "free"
+            config = PLAN_CONFIG["free"]
+
+        limit = config[quota_key.replace("summaries", "daily_summaries").replace("downloads", "daily_downloads")]
+        # 上面这行有点绕，直接用 action 判断更清晰
+        if action == "download":
+            limit = config["daily_downloads"]
+        elif action in ("summarize", "mindmap"):
+            limit = config["daily_summaries"]
+
+        used = usage.get(quota_key, 0)
+
+        if used >= limit:
+            quota = QuotaInfo(
+                user_id=user_id, plan=plan, expires_at=row["expires_at"],
+                daily_downloads_limit=config["daily_downloads"],
+                daily_summaries_limit=config["daily_summaries"],
+                daily_downloads_used=usage.get("downloads", 0),
+                daily_summaries_used=usage.get("summaries", 0),
+                can_batch_download=config["batch_download"],
+                batch_max_count=config["batch_max_count"],
+                can_export_mindmap=config["mindmap_export"],
+                max_quality=config["max_quality"],
+                has_watermark=config["watermark"],
+                is_expired=False,
+            )
+            return {
+                "allowed": False,
+                "quota": quota,
+                "reason": f"今日{quota_key}额度已用完（{used}/{limit}），请升级会员或明天再试",
+                "remaining": 0,
+            }
+
+        # 原子更新：消耗 1 次额度
+        usage[quota_key] = used + 1
+        conn.execute(
+            "UPDATE user_membership SET daily_usage_json=?, updated_at=? WHERE user_id=?",
+            (json.dumps(usage), now, user_id)
+        )
+
+        # 记录操作日志
+        conn.execute(
+            "INSERT INTO usage_logs (user_id, action, video_url, video_title, consumed_at, ip_address) VALUES (?,?,?,?,?,?)",
+            (user_id, action, video_url, video_title, now, ip_address)
+        )
+
+        remaining = limit - (used + 1)
+
+    quota = QuotaInfo(
+        user_id=user_id, plan=plan, expires_at=row["expires_at"],
+        daily_downloads_limit=config["daily_downloads"],
+        daily_summaries_limit=config["daily_summaries"],
+        daily_downloads_used=usage.get("downloads", 0),
+        daily_summaries_used=usage.get("summaries", 0),
+        can_batch_download=config["batch_download"],
+        batch_max_count=config["batch_max_count"],
+        can_export_mindmap=config["mindmap_export"],
+        max_quality=config["max_quality"],
+        has_watermark=config["watermark"],
+        is_expired=False,
+    )
+
+    return {
+        "allowed": True,
+        "quota": quota,
+        "reason": "",
+        "remaining": remaining,
+    }
+
+
+def set_user_plan(
+    user_id: str,
+    plan: str,
+    order_type: str = "monthly",
+    duration_days: int = 30,
+) -> bool:
+    """
+    设置用户会员等级（支付成功后调用）。
+
+    Args:
+        user_id: 用户 ID
+        plan: 目标等级 (pro/ultra)
+        order_type: monthly / yearly / lifetime
+        duration_days: 有效天数（lifetime 时忽略）
+    """
+    if plan not in ("pro", "ultra"):
+        raise ValueError(f"无效的套餐等级: {plan}")
+
+    now = int(time.time())
+
+    if plan == "ultra":
+        expires_at = 0  # 永不过期
+    else:
+        expires_at = now + duration_days * 86400
+
+    with _get_db() as conn:
+        _ensure_user_membership(conn, user_id)
+        conn.execute(
+            """UPDATE user_membership
+               SET plan=?, expires_at=?, updated_at=?
+               WHERE user_id=?""",
+            (plan, expires_at, now, user_id)
+        )
+    return True
+
+
+def create_order(
+    user_id: str,
+    plan: str,
+    order_type: str,
+    amount: float,
+    currency: str = "CNY",
+    payment_gateway: str = "",
+) -> str:
+    """创建订单，返回订单 ID"""
+    import uuid
+    order_id = str(uuid.uuid4())
+    now = int(time.time())
+
+    with _get_db() as conn:
+        conn.execute(
+            """INSERT INTO orders (id, user_id, plan, order_type, amount, currency, status, payment_gateway, created_at)
+               VALUES (?,?,?,?,?,?, 'pending', ?, ?)""",
+            (order_id, user_id, plan, order_type, amount, currency, payment_gateway, now)
+        )
+    return order_id
+
+
+def mark_order_paid(
+    order_id: str,
+    gateway_order_id: str = "",
+    gateway_data: dict = None,
+) -> Optional[str]:
+    """
+    标记订单已支付，并自动升级用户会员。
+    返回 user_id 或 None。
+    """
+    now = int(time.time())
+    gateway_data = gateway_data or {}
+
+    with _get_db() as conn:
+        order = conn.execute(
+            "SELECT * FROM orders WHERE id=?", (order_id,)
+        ).fetchone()
+        if not order:
+            return None
+        if order["status"] == "paid":
+            return order["user_id"]  # 幂等
+
+        conn.execute(
+            """UPDATE orders
+               SET status='paid', gateway_order_id=?, gateway_data_json=?, paid_at=?
+               WHERE id=?""",
+            (gateway_order_id, json.dumps(gateway_data), now, order_id)
+        )
+
+        # 根据订单类型计算有效期
+        if order["plan"] == "ultra" or order["order_type"] == "lifetime":
+            duration_days = 0  # 永久
+        elif order["order_type"] == "yearly":
+            duration_days = 365
+        else:
+            duration_days = 30  # monthly
+
+        set_user_plan(order["user_id"], order["plan"], order["order_type"], duration_days)
+
+    return order["user_id"]
+
+
+def get_plan_config(plan: str) -> Dict[str, Any]:
+    """获取套餐配置（供前端展示）"""
+    return PLAN_CONFIG.get(plan, PLAN_CONFIG["free"])
+
+
+def get_all_plans() -> Dict[str, Dict[str, Any]]:
+    """获取所有套餐配置（供前端定价页展示）"""
+    # 返回副本，防止前端意外修改
+    return {
+        "free": dict(PLAN_CONFIG["free"]),
+        "pro": dict(PLAN_CONFIG["pro"]),
+        "ultra": dict(PLAN_CONFIG["ultra"]),
+    }
+
+
+# ═══════════════════════════════════════════════
+#  游客额度系统（基于 IP + 日期，无需登录）
+# ═══════════════════════════════════════════════
+
+# 游客每日免费下载次数
+GUEST_DAILY_DOWNLOADS = 1
+GUEST_DAILY_SUMMARIES = 1
+
+
+def _init_guest_table(conn: sqlite3.Connection):
+    """初始化游客用量表"""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS guest_usage (
+            ip_address TEXT NOT NULL,
+            usage_date TEXT NOT NULL,
+            action TEXT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (ip_address, usage_date, action)
+        )
+    """)
+
+
+def get_guest_quota(ip_address: str) -> Dict[str, Any]:
+    """
+    获取游客当前额度信息。
+    无需登录，基于 IP + 日期追踪。
+    """
+    today = _get_today_str()
+    with _get_db() as conn:
+        _init_guest_table(conn)
+        # 清理过期数据（保留最近 7 天）
+        conn.execute(
+            "DELETE FROM guest_usage WHERE usage_date < ?",
+            ((datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"),)
+        )
+
+        row = conn.execute(
+            "SELECT action, count FROM guest_usage WHERE ip_address=? AND usage_date=?",
+            (ip_address, today)
+        ).fetchall()
+
+    downloads_used = 0
+    summaries_used = 0
+    for r in row:
+        if r["action"] == "download":
+            downloads_used = r["count"]
+        elif r["action"] == "summarize":
+            summaries_used = r["count"]
+
+    return {
+        "plan": "guest",
+        "daily_downloads_limit": GUEST_DAILY_DOWNLOADS,
+        "daily_summaries_limit": GUEST_DAILY_SUMMARIES,
+        "daily_downloads_used": downloads_used,
+        "daily_summaries_used": summaries_used,
+        "can_batch_download": False,
+        "batch_max_count": 0,
+        "can_export_mindmap": False,
+        "max_quality": "720p",
+        "has_watermark": True,
+        "is_expired": False,
+        "is_guest": True,
+    }
+
+
+def check_and_consume_guest_quota(
+    ip_address: str,
+    action: str,
+    video_url: str = "",
+) -> Dict[str, Any]:
+    """
+    检查并消耗游客额度。原子操作。
+
+    Returns:
+        { "allowed": bool, "quota": dict, "reason": str, "remaining": int }
+    """
+    today = _get_today_str()
+    now = int(time.time())
+
+    if action not in ("download", "summarize", "mindmap"):
+        return {"allowed": False, "reason": f"未知操作类型: {action}"}
+
+    # 游客思维导图与总结共享额度
+    quota_action = "summarize" if action in ("summarize", "mindmap") else "download"
+    # 映射到 dict 键名（注意复数形式：summaries 不是 summarizes）
+    quota_key = "summaries" if quota_action == "summarize" else "downloads"
+    limit = GUEST_DAILY_SUMMARIES if quota_action == "summarize" else GUEST_DAILY_DOWNLOADS
+
+    quota = get_guest_quota(ip_address)
+    used = quota[f"daily_{quota_key}_used"]
+
+    if used >= limit:
+        action_label = "总结" if quota_action == "summarize" else "下载"
+        return {
+            "allowed": False,
+            "quota": quota,
+            "reason": f"游客今日{action_label}额度已用完（{used}/{limit}），请登录获取更多额度",
+            "remaining": 0,
+        }
+
+    with _get_db() as conn:
+        _init_guest_table(conn)
+        conn.execute(
+            """INSERT INTO guest_usage (ip_address, usage_date, action, count)
+               VALUES (?, ?, ?, 1)
+               ON CONFLICT (ip_address, usage_date, action)
+               DO UPDATE SET count = count + 1""",
+            (ip_address, today, quota_action)
+        )
+
+    remaining = limit - (used + 1)
+    quota[f"daily_{quota_key}_used"] = used + 1
+
+    return {
+        "allowed": True,
+        "quota": quota,
+        "reason": "",
+        "remaining": remaining,
+    }
+
+
+# 启动时初始化
+init_membership_db()

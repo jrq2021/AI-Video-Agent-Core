@@ -3,11 +3,20 @@ import { useState } from "react";
 const navItems = [
   { label: "首页", href: "#home" },
   { label: "功能特色", href: "#features" },
+  { label: "套餐定价", href: "#pricing" },
   { label: "常见问题", href: "#faq" },
   { label: "联系我们", href: "#contact" },
 ];
 
-export default function Navbar({ user, onAuthClick, onLogout }) {
+// 会员等级样式映射
+const PLAN_STYLES = {
+  free: { bg: "bg-dark-100", text: "text-dark-600", label: "免费版" },
+  pro: { bg: "bg-primary-100", text: "text-primary-700", label: "Pro" },
+  ultra: { bg: "bg-purple-100", text: "text-purple-700", label: "Ultra" },
+  guest: { bg: "bg-dark-100", text: "text-dark-500", label: "游客" },
+};
+
+export default function Navbar({ user, quota, onAuthClick, onLogout }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleNavClick = (e, href) => {
@@ -67,6 +76,25 @@ export default function Navbar({ user, onAuthClick, onLogout }) {
           <div className="hidden md:flex items-center gap-3">
             {user ? (
               <>
+                {/* ── 会员等级徽章 + 额度 ── */}
+                {quota && (
+                  <div className="flex items-center gap-2 mr-1">
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                        (PLAN_STYLES[quota.plan] || PLAN_STYLES.free).bg
+                      } ${(PLAN_STYLES[quota.plan] || PLAN_STYLES.free).text}`}
+                    >
+                      {(PLAN_STYLES[quota.plan] || PLAN_STYLES.free).label}
+                    </span>
+                    <span className="text-xs text-dark-400">
+                      下载{" "}
+                      <span className="font-semibold text-dark-600">
+                        {quota.daily_downloads_used}/
+                        {quota.daily_downloads_limit}
+                      </span>
+                    </span>
+                  </div>
+                )}
                 <span className="text-sm text-dark-500">{user.username}</span>
                 <button
                   onClick={onLogout}
@@ -77,6 +105,20 @@ export default function Navbar({ user, onAuthClick, onLogout }) {
               </>
             ) : (
               <>
+                {/* ── 游客额度提示 ── */}
+                {quota && quota.is_guest && (
+                  <span className="text-xs text-dark-400 mr-1">
+                    今日剩余{" "}
+                    <span className="font-semibold text-dark-600">
+                      {Math.max(
+                        0,
+                        (quota.daily_downloads_limit || 1) -
+                          (quota.daily_downloads_used || 0),
+                      )}
+                    </span>{" "}
+                    次下载
+                  </span>
+                )}
                 <button
                   onClick={onAuthClick}
                   className="btn-secondary text-sm !px-4 !py-2"

@@ -27,8 +27,23 @@ function formatSize(bytes) {
   return bytes + " B";
 }
 
-export default function VideoInfo({ data, onDownloadComplete }) {
+export default function VideoInfo({
+  data,
+  user,
+  quota,
+  checkQuota,
+  consumeQuota,
+  openUpgrade,
+  onDownloadComplete,
+}) {
   const [selectedFormat, setSelectedFormat] = useState("best");
+
+  // ── 额度检查 ──
+  const downloadRemaining = quota
+    ? quota.daily_downloads_limit - quota.daily_downloads_used
+    : null;
+  const isFreeUser = quota?.plan === "free";
+  const hasWatermark = quota?.has_watermark ?? true;
 
   // 通过后端代理加载缩略图（绕过防盗链）
   const thumbnailUrl = data.thumbnail
@@ -63,18 +78,45 @@ export default function VideoInfo({ data, onDownloadComplete }) {
     .slice(0, 15);
 
   const handleDownload = async () => {
+    // ── 前端额度预检 ──
+    if (checkQuota) {
+      const check = checkQuota("download");
+      if (!check.allowed) {
+        if (check.needLogin && openUpgrade) {
+          openUpgrade(check.reason); // 游客 → 弹出登录引导
+        } else if (check.needUpgrade && openUpgrade) {
+          openUpgrade(check.reason); // 额度用完 → 弹出升级引导
+        }
+        return;
+      }
+    }
+
     setDownloadState("downloading");
     setProgress(null);
 
     try {
+      const token = localStorage.getItem("auth_token");
       const res = await fetch("/api/download", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           url: data.webpage_url,
           format_id: selectedFormat,
         }),
       });
+
+      // 处理 429 额度超限
+      if (res.status === 429) {
+        const errData = await res.json();
+        const detail = JSON.parse(errData.detail || "{}");
+        setDownloadState("error");
+        setProgress({ error: detail.message || "额度不足，请升级会员" });
+        if (openUpgrade) openUpgrade(detail.message);
+        return;
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -106,6 +148,8 @@ export default function VideoInfo({ data, onDownloadComplete }) {
               ) {
                 setDownloadState("completed");
                 setDownloadFilename(eventData.filename || "");
+                // ── 下载成功后刷新额度 ──
+                if (consumeQuota) consumeQuota();
                 if (onDownloadComplete) {
                   onDownloadComplete(data, eventData.filename || "");
                 }
@@ -256,9 +300,65 @@ export default function VideoInfo({ data, onDownloadComplete }) {
       {/* 格式选择 — 点击即下载 */}
       {availableFormats.length > 0 && (
         <div className="mt-4 card p-5">
-          <h3 className="text-sm font-semibold text-dark-700 mb-3">
-            选择画质下载
-          </h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-dark-700">
+              选择画质下载
+            </h3>
+            {/* ── 额度指示器 ── */}
+            {user && downloadRemaining !== null && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-dark-400">今日剩余</span>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                    downloadRemaining <= 1
+                      ? "bg-red-100 text-red-600"
+                      : downloadRemaining <= 3
+                        ? "bg-amber-100 text-amber-700"
+                        : "bg-green-100 text-green-700"
+                  }`}
+                >
+                  {downloadRemaining} 次
+                </span>
+                {isFreeUser && (
+                  <button
+                    onClick={() => openUpgrade?.("升级 Pro 解锁每日 30 次下载")}
+                    className="text-xs text-primary-600 hover:text-primary-700 font-medium underline"
+                  >
+                    升级
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          {/* ── 免费用户水印提示 ── */}
+          {isFreeUser && hasWatermark && (
+            <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-100 rounded-lg flex items-center gap-2 text-xs text-amber-700">
+              <svg
+                className="w-4 h-4 flex-shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+                />
+              </svg>
+              <span>
+                免费版下载视频将包含水印，
+                <button
+                  onClick={() =>
+                    openUpgrade?.("升级 Pro 去除水印，享受无水印下载")
+                  }
+                  className="underline font-medium hover:text-amber-800"
+                >
+                  升级去水印
+                </button>
+              </span>
+            </div>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {availableFormats.map((f) => {
               const isSelected = selectedFormat === f.format_id;

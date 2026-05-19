@@ -176,5 +176,20 @@ def get_current_user(request: Request) -> dict:
     return user
 
 
+def get_optional_user(request: Request) -> Optional[dict]:
+    """可选登录：已登录返回用户信息，未登录返回 None"""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    try:
+        token = auth[7:]
+        user_id = decode_token(token)
+        if user_id:
+            return get_user_by_id(user_id)
+    except Exception:
+        pass
+    return None
+
+
 # 启动时初始化数据库
 init_db()

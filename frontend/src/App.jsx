@@ -5,12 +5,15 @@ import VideoInput from "./components/VideoInput";
 import VideoInfo from "./components/VideoInfo";
 import VideoSubtitle from "./components/VideoSubtitle";
 import FeaturesSection from "./components/FeaturesSection";
+import PricingSection from "./components/PricingSection";
 import FAQSection from "./components/FAQSection";
 import ContactSection from "./components/ContactSection";
 import DownloadHistory, { addHistoryItem } from "./components/DownloadHistory";
+import UpgradeModal from "./components/UpgradeModal";
 import Footer from "./components/Footer";
 import AuthModal from "./components/AuthModal";
 import Background3D from "./components/Background3D";
+import useQuota from "./hooks/useQuota";
 
 export default function App() {
   const [videoData, setVideoData] = useState(null);
@@ -20,18 +23,40 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [user, setUser] = useState(null);
 
+  // ── 会员额度 Hook ──
+  const {
+    quota,
+    fetchQuota,
+    checkQuota,
+    consumeQuota,
+    showUpgrade,
+    upgradeReason,
+    openUpgrade,
+    closeUpgrade,
+    handleUpgrade,
+    isLoading: isUpgrading,
+  } = useQuota(user);
+
   // 启动时恢复登录态
   useEffect(() => {
     const token = localStorage.getItem("auth_token");
     const saved = localStorage.getItem("auth_user");
     if (token && saved) {
       try {
-        setUser(JSON.parse(saved));
-        // 验证 token 是否有效
+        const userData = JSON.parse(saved);
+        setUser(userData);
+        // 验证 token 是否有效 + 拉取最新会员信息
         fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
           .then((r) => r.json())
           .then((d) => {
-            if (!d.success) handleLogout();
+            if (d.success) {
+              // 合并服务端返回的最新会员状态
+              const updated = { ...userData, ...d.user };
+              setUser(updated);
+              localStorage.setItem("auth_user", JSON.stringify(updated));
+            } else {
+              handleLogout();
+            }
           })
           .catch(() => {});
       } catch {
@@ -42,6 +67,8 @@ export default function App() {
 
   const handleLogin = (userData, token) => {
     setUser(userData);
+    localStorage.setItem("auth_token", token);
+    localStorage.setItem("auth_user", JSON.stringify(userData));
   };
 
   const handleLogout = () => {
@@ -91,6 +118,7 @@ export default function App() {
       <Background3D />
       <Navbar
         user={user}
+        quota={quota}
         onAuthClick={() => setAuthOpen(true)}
         onLogout={handleLogout}
       />
@@ -102,7 +130,14 @@ export default function App() {
       <main className="flex-1" aria-label="主要内容">
         <HeroSection />
         <div className="max-w-7xl mx-auto px-4 pb-12">
-          <VideoInput onAnalyze={handleAnalyze} isLoading={isLoading} />
+          <VideoInput
+            onAnalyze={handleAnalyze}
+            onCheckQuota={checkQuota}
+            quota={quota}
+            isLoading={isLoading}
+            user={user}
+            onAuthClick={() => setAuthOpen(true)}
+          />
           {error && (
             <div className="mt-4 p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 text-sm">
               {error}
@@ -120,6 +155,11 @@ export default function App() {
               <div className="lg:col-span-2 space-y-5">
                 <VideoInfo
                   data={videoData}
+                  user={user}
+                  quota={quota}
+                  checkQuota={checkQuota}
+                  consumeQuota={consumeQuota}
+                  openUpgrade={openUpgrade}
                   onDownloadComplete={handleDownloadComplete}
                 />
               </div>
@@ -128,6 +168,11 @@ export default function App() {
                 <VideoSubtitle
                   videoSrc={null}
                   originalUrl={videoData.webpage_url}
+                  user={user}
+                  quota={quota}
+                  checkQuota={checkQuota}
+                  consumeQuota={consumeQuota}
+                  openUpgrade={openUpgrade}
                 />
               </div>
             </div>
@@ -135,10 +180,38 @@ export default function App() {
         </div>
         <DownloadHistory key={historyKey} onReDownload={handleReDownload} />
         <FeaturesSection />
+
+        {/* ── 会员套餐定价区 ── */}
+        <PricingSection
+          currentUser={user}
+          onUpgrade={handleUpgrade}
+          isLoading={isUpgrading}
+        />
+
         <FAQSection />
         <ContactSection />
       </main>
       <Footer />
+
+      {/* ── 付费墙拦截弹窗（额度不足时自动弹出） ── */}
+      {/* 游客额度用完 → 引导登录；登录用户额度用完 → 引导升级 */}
+      <UpgradeModal
+        show={showUpgrade && !!user}
+        reason={upgradeReason}
+        currentUser={user}
+        onUpgrade={handleUpgrade}
+        onClose={closeUpgrade}
+        isLoading={isUpgrading}
+      />
+      {/* 游客额度用完 → 弹出登录弹窗 */}
+      <AuthModal
+        isOpen={showUpgrade && !user}
+        onClose={closeUpgrade}
+        onLogin={(userData, token) => {
+          handleLogin(userData, token);
+          closeUpgrade();
+        }}
+      />
     </div>
   );
 }

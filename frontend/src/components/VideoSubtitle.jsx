@@ -153,9 +153,24 @@ function Tabs({ tabs, active, onChange }) {
  * - 画中画：滚动离开视频区时右下角 Sticky 迷你播放器
  * ═══════════════════════════════════════════════════════════════════ */
 
-export default function VideoSubtitle({ videoSrc, originalUrl }) {
+export default function VideoSubtitle({
+  videoSrc,
+  originalUrl,
+  user,
+  quota,
+  checkQuota,
+  consumeQuota,
+  openUpgrade,
+}) {
   const bvid = extractBvid(originalUrl);
   const isBili = isBilibiliUrl(originalUrl);
+
+  // ── 额度信息 ──
+  const summarizeRemaining = quota
+    ? quota.daily_summaries_limit - quota.daily_summaries_used
+    : null;
+  const isFreeUser = quota?.plan === "free";
+  const canExportMindmap = quota?.can_export_mindmap ?? false;
 
   // ── 全局共享：视频基础数据（一次解析，多处复用）──
   const [videoData, setVideoData] = useState(null); // { title, subtitles }
@@ -163,6 +178,8 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
   const [parseMessage, setParseMessage] = useState("");
   const parsePromiseRef = useRef(null);
   const subtitlesCacheRef = useRef(""); // 解决异步闭包中 stale state 问题
+  const titleCacheRef = useRef("");     // 同上，缓存标题
+  const hasParsedRef = useRef(false);   // 标记是否已完成解析（即使无字幕）
 
   // ── 字幕/转录状态 ──
   const [state, setState] = useState("idle"); // idle|loading|done|error
@@ -197,6 +214,8 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
     setParseMessage("");
     parsePromiseRef.current = null;
     subtitlesCacheRef.current = "";
+    titleCacheRef.current = "";
+    hasParsedRef.current = false;
     setState("idle");
     setSegments([]);
     setExtractedSubtitles("");
@@ -211,8 +230,8 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
 
   /* ──── 核心保障函数：确保视频字幕已解析并缓存 ──── */
   const ensureVideoData = useCallback(async () => {
-    // 命中缓存
-    if (videoData?.subtitles) return;
+    // 命中缓存：已解析过（无论有无字幕）或有字幕数据
+    if (hasParsedRef.current || videoData?.subtitles) return;
 
     // 已有请求在进行中 → 等待同一个 Promise
     if (parsePromiseRef.current) {
@@ -240,6 +259,8 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
         });
         setExtractedSubtitles(data.subtitles);
         subtitlesCacheRef.current = data.subtitles;
+        titleCacheRef.current = data.title || "";
+        hasParsedRef.current = true;
         // 如果后端返回了带时间轴的分段，直接使用
         if (data.segments && data.segments.length > 0) {
           setSegments(data.segments);
@@ -378,7 +399,7 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
                         .join(" ");
                       setExtractedSubtitles(cachedPlain);
                       subtitlesCacheRef.current = cachedPlain;
-                      setVideoData({ title: "", subtitles: cachedPlain });
+                      setVideoData({ title: titleCacheRef.current, subtitles: cachedPlain });
                       setParseState("done");
                       break;
                     }
@@ -393,7 +414,7 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
                         d.segments?.map((s) => s.text).join(" ") || "";
                       setExtractedSubtitles(plainText);
                       subtitlesCacheRef.current = plainText;
-                      setVideoData({ title: "", subtitles: plainText });
+                      setVideoData({ title: titleCacheRef.current, subtitles: plainText });
                       setParseState("done");
                       break;
                     }
@@ -422,6 +443,19 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
 
   /* ──── AI 总结（复用 ensureVideoData 缓存）──── */
   const handleSummarize = useCallback(async () => {
+    // ── 额度预检 ──
+    if (checkQuota) {
+      const check = checkQuota("summarize");
+      if (!check.allowed) {
+        if (check.needLogin && openUpgrade) {
+          openUpgrade(check.reason);
+        } else if (check.needUpgrade && openUpgrade) {
+          openUpgrade(check.reason);
+        }
+        return;
+      }
+    }
+
     if (!originalUrl) return;
     try {
       await ensureVideoData();
@@ -429,19 +463,32 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
       return; // parseState 已标记 error，UI 会展示
     }
     // videoData 已就绪（通过 ref 避免 stale closure）
-    const subtitles = videoData?.subtitles || subtitlesCacheRef.current;
-    const title = videoData?.title || "";
+    const subtitles = subtitlesCacheRef.current || videoData?.subtitles || "";
+    const title = titleCacheRef.current || videoData?.title || "";
     setSummaryState("summarizing");
     setSummaryText("");
     setSummaryError("");
     const ctrl = new AbortController();
+    const token = localStorage.getItem("auth_token");
     fetch("/api/video/summarize-text", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({ subtitles, title }),
       signal: ctrl.signal,
     })
       .then((res) => {
+        // 处理 429 额度超限
+        if (res.status === 429) {
+          return res.json().then((errData) => {
+            const detail = JSON.parse(errData.detail || "{}");
+            setSummaryState("error");
+            setSummaryError(detail.message || "额度不足，请升级会员");
+            if (openUpgrade) openUpgrade(detail.message);
+          });
+        }
         const reader = res.body.getReader();
         const dec = new TextDecoder();
         let buf = "";
@@ -451,6 +498,8 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
             .then(({ done, value }) => {
               if (done) {
                 setSummaryState("done");
+                // ── 总结成功后刷新额度 ──
+                if (consumeQuota) consumeQuota();
                 return;
               }
               buf += dec.decode(value, { stream: true });
@@ -480,34 +529,70 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
           setSummaryError(`网络错误: ${err.message}`);
         }
       });
-  }, [originalUrl, ensureVideoData, videoData]);
+  }, [
+    originalUrl,
+    ensureVideoData,
+    videoData,
+    user,
+    checkQuota,
+    consumeQuota,
+    openUpgrade,
+  ]);
 
   /* ──── 思维导图（复用 ensureVideoData 缓存）──── */
   const handleGenerateMindmap = useCallback(async () => {
+    // ── 额度预检 ──
+    if (checkQuota) {
+      const check = checkQuota("mindmap");
+      if (!check.allowed) {
+        if (check.needLogin && openUpgrade) {
+          openUpgrade(check.reason);
+        } else if (check.needUpgrade && openUpgrade) {
+          openUpgrade(check.reason);
+        }
+        return;
+      }
+    }
+
     if (!originalUrl) return;
     try {
       await ensureVideoData();
     } catch {
       return;
     }
-    const subtitles = videoData?.subtitles || subtitlesCacheRef.current;
-    const title = videoData?.title || "";
+    const subtitles = subtitlesCacheRef.current || videoData?.subtitles || "";
+    const title = titleCacheRef.current || videoData?.title || "";
     setMindmapState("loading");
     setMindmapError("");
     setMindmapData("");
+    const token = localStorage.getItem("auth_token");
     fetch("/api/video/mindmap-text", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({ subtitles, title }),
     })
       .then((res) => {
+        if (res.status === 429) {
+          return res.json().then((errData) => {
+            const detail = JSON.parse(errData.detail || "{}");
+            setMindmapState("error");
+            setMindmapError(detail.message || "额度不足，请升级会员");
+            if (openUpgrade) openUpgrade(detail.message);
+          });
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
       .then((data) => {
+        if (!data) return; // 429 already handled
         if (data.success) {
           setMindmapData(data.data.markdown);
           setMindmapState("done");
+          // ── 生成成功后刷新额度 ──
+          if (consumeQuota) consumeQuota();
         } else {
           throw new Error(data.message || "生成失败");
         }
@@ -516,7 +601,15 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
         setMindmapState("error");
         setMindmapError(err.message);
       });
-  }, [originalUrl, ensureVideoData, videoData]);
+  }, [
+    originalUrl,
+    ensureVideoData,
+    videoData,
+    user,
+    checkQuota,
+    consumeQuota,
+    openUpgrade,
+  ]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -580,9 +673,39 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
                     <p className="text-dark-400 text-xs mt-1.5 max-w-xs mx-auto">
                       自动提取视频字幕，通过 DeepSeek 大模型生成结构化要点总结
                     </p>
+                    {/* ── 额度指示器 ── */}
+                    {user && summarizeRemaining !== null && (
+                      <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 bg-dark-50 rounded-full">
+                        <span className="text-xs text-dark-400">今日剩余</span>
+                        <span
+                          className={`text-xs font-bold ${
+                            summarizeRemaining <= 0
+                              ? "text-red-500"
+                              : "text-green-600"
+                          }`}
+                        >
+                          {summarizeRemaining} 次
+                        </span>
+                        {isFreeUser && summarizeRemaining <= 0 && (
+                          <button
+                            onClick={() =>
+                              openUpgrade?.("升级 Pro 每日 10 次 AI 总结")
+                            }
+                            className="text-xs text-primary-600 hover:text-primary-700 font-medium underline"
+                          >
+                            升级
+                          </button>
+                        )}
+                      </div>
+                    )}
                     <button
                       onClick={handleSummarize}
-                      className="relative mt-5 px-6 py-2.5 bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-500 text-white rounded-xl font-medium text-sm hover:from-blue-700 hover:via-blue-600 hover:to-indigo-600 active:scale-95 transition-all shadow-lg shadow-blue-500/25 animate-glow"
+                      disabled={
+                        user &&
+                        summarizeRemaining !== null &&
+                        summarizeRemaining <= 0
+                      }
+                      className="relative mt-5 px-6 py-2.5 bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-500 text-white rounded-xl font-medium text-sm hover:from-blue-700 hover:via-blue-600 hover:to-indigo-600 active:scale-95 transition-all shadow-lg shadow-blue-500/25 animate-glow disabled:opacity-50 disabled:cursor-not-allowed disabled:animate-none"
                     >
                       <span className="relative z-10">✨ 生成 AI 总结</span>
                     </button>
@@ -681,31 +804,88 @@ export default function VideoSubtitle({ videoSrc, originalUrl }) {
                     <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-amber-50 flex items-center justify-center">
                       {Icon.mindmap}
                     </div>
-                    {!summaryText &&
-                    !extractedSubtitles &&
-                    segments.length === 0 ? (
+                    {/* ── 免费用户思维导图锁定 ── */}
+                    {isFreeUser && !canExportMindmap ? (
                       <>
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 mb-3 bg-purple-50 border border-purple-100 rounded-full">
+                          <svg
+                            className="w-3.5 h-3.5 text-purple-500"
+                            fill="currentColor"
+                            viewBox="0 0 20 20"
+                          >
+                            <path
+                              fillRule="evenodd"
+                              d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
+                              clipRule="evenodd"
+                            />
+                          </svg>
+                          <span className="text-xs font-semibold text-purple-700">
+                            Pro / Ultra 专属
+                          </span>
+                        </div>
                         <p className="text-dark-500 text-sm mb-1">
-                          暂无可用内容
+                          思维导图功能需升级会员
                         </p>
-                        <p className="text-dark-400 text-xs">
-                          请先在「核心总结」中生成总结，思维导图将自动创建
+                        <p className="text-dark-400 text-xs mb-4">
+                          升级 Pro 或 Ultra 后即可将视频内容可视化为思维导图
                         </p>
+                        <button
+                          onClick={() =>
+                            openUpgrade?.("思维导图是 Pro/Ultra 专属功能")
+                          }
+                          className="px-5 py-2 bg-gradient-to-r from-purple-600 to-purple-500 text-white rounded-xl font-medium text-sm hover:from-purple-700 hover:to-purple-600 active:scale-95 transition-all shadow-md shadow-purple-500/20"
+                        >
+                          🔓 升级解锁
+                        </button>
                       </>
                     ) : (
                       <>
-                        <p className="text-dark-500 text-sm mb-1">
-                          将视频内容可视化为思维导图
-                        </p>
-                        <p className="text-dark-400 text-xs mb-4">
-                          基于 DeepSeek 大模型自动提炼逻辑结构
-                        </p>
-                        <button
-                          onClick={handleGenerateMindmap}
-                          className="px-5 py-2 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 active:scale-95 transition-all shadow-md shadow-amber-500/20"
-                        >
-                          🧠 生成思维导图
-                        </button>
+                        {!summaryText &&
+                        !extractedSubtitles &&
+                        segments.length === 0 ? (
+                          <>
+                            <p className="text-dark-500 text-sm mb-1">
+                              暂无可用内容
+                            </p>
+                            <p className="text-dark-400 text-xs">
+                              请先在「核心总结」中生成总结，思维导图将自动创建
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-dark-500 text-sm mb-1">
+                              将视频内容可视化为思维导图
+                            </p>
+                            <p className="text-dark-400 text-xs mb-4">
+                              基于 DeepSeek 大模型自动提炼逻辑结构
+                            </p>
+                            {/* ── 额度指示器 ── */}
+                            {user && summarizeRemaining !== null && (
+                              <div className="mb-3 inline-flex items-center gap-2 px-3 py-1.5 bg-dark-50 rounded-full">
+                                <span className="text-xs text-dark-400">
+                                  今日剩余
+                                </span>
+                                <span
+                                  className={`text-xs font-bold ${summarizeRemaining <= 0 ? "text-red-500" : "text-green-600"}`}
+                                >
+                                  {summarizeRemaining} 次
+                                </span>
+                              </div>
+                            )}
+                            <br />
+                            <button
+                              onClick={handleGenerateMindmap}
+                              disabled={
+                                user &&
+                                summarizeRemaining !== null &&
+                                summarizeRemaining <= 0
+                              }
+                              className="px-5 py-2 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 active:scale-95 transition-all shadow-md shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              🧠 生成思维导图
+                            </button>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
