@@ -13,7 +13,7 @@
 - 视频下载：每成功下载 1 个视频消耗 1 次下载额度
 - AI 总结：每生成 1 次视频总结消耗 1 次总结额度
 - 思维导图：与 AI 总结共享额度（生成导图也算 1 次）
-- 批量下载：Pro/Ultra 专属功能，每次批量任务最多 N 个视频
+- 批量下载：功能规划中，当前不作为已上线权益返回
 """
 
 import os
@@ -43,66 +43,61 @@ PLAN_CONFIG: Dict[str, Dict[str, Any]] = {
         "price_monthly": 0,
         "price_lifetime": 0,
         "daily_downloads": 3,        # 每日下载次数
-        "max_quality": "1080p",      # 最高画质（实际受限于源站）
+        "max_quality": "源站可用",    # 实际受限于源站返回的格式
         "daily_summaries": 1,        # 每日 AI 总结次数
         "batch_download": False,     # 批量下载
         "batch_max_count": 0,
         "mindmap_export": False,     # 思维导图导出
-        "watermark": True,           # 下载视频加水印
+        "watermark": False,          # 当前没有实现主动加水印/去水印链路
         "priority_support": False,
         "features": [
             "每日 3 次视频下载",
-            "最高 1080p 画质",
+            "公开视频直链解析",
             "每日 1 次 AI 智能总结",
             "基础字幕提取",
-            "下载视频含水印",
         ],
     },
     "pro": {
         "name": "专业版",
         "name_en": "Pro",
-        "price_monthly": 29,         # ¥29/月（建议定价）
-        "price_yearly": 199,         # ¥199/年（约 ¥16.6/月，节省 43%）
+        "price_monthly": 9.9,        # ¥9.9/月
+        "price_yearly": 99,          # ¥99/年（约 ¥8.3/月，节省 17%）
         "price_lifetime": 0,
         "daily_downloads": 30,
-        "max_quality": "4K",
+        "max_quality": "源站可用",
         "daily_summaries": 10,
-        "batch_download": True,
-        "batch_max_count": 10,
+        "batch_download": False,
+        "batch_max_count": 0,
         "mindmap_export": True,
         "watermark": False,
         "priority_support": False,
         "features": [
             "每日 30 次视频下载",
-            "最高 4K 超清画质",
             "每日 10 次 AI 智能总结",
-            "批量下载（最多 10 个）",
-            "思维导图导出（Markdown/PNG）",
-            "无水印下载",
-            "字幕提取 + 导出",
+            "字幕提取 + SRT/VTT 导出",
+            "思维导图生成与导出",
+            "B站 / 抖音专项解析",
         ],
     },
     "ultra": {
         "name": "旗舰版",
         "name_en": "Ultra",
         "price_monthly": 0,
-        "price_lifetime": 299,       # ¥299 终身买断
+        "price_lifetime": 199,       # ¥199 终身买断
         "daily_downloads": 100,      # 合理公平使用上限
-        "max_quality": "4K",
+        "max_quality": "源站可用",
         "daily_summaries": 50,
-        "batch_download": True,
-        "batch_max_count": 50,
+        "batch_download": False,
+        "batch_max_count": 0,
         "mindmap_export": True,
         "watermark": False,
-        "priority_support": True,
+        "priority_support": False,
         "features": [
             "每日 100 次视频下载",
-            "最高 4K 超清画质",
             "每日 50 次 AI 智能总结",
-            "无限批量下载",
-            "思维导图导出（Markdown/PNG/PDF）",
-            "无水印高速下载",
-            "优先技术支持",
+            "字幕提取 + 导出",
+            "思维导图导出（SVG/PNG）",
+            "B站 / 抖音专项解析",
             "终身有效，无需续费",
         ],
     },
@@ -443,7 +438,7 @@ def create_order(
 ) -> str:
     """创建订单，返回订单 ID"""
     import uuid
-    order_id = str(uuid.uuid4())
+    order_id = uuid.uuid4().hex
     now = int(time.time())
 
     with _get_db() as conn:
@@ -453,6 +448,25 @@ def create_order(
             (order_id, user_id, plan, order_type, amount, currency, payment_gateway, now)
         )
     return order_id
+
+
+def get_order(order_id: str) -> Optional[Dict[str, Any]]:
+    """Return one order as a plain dict, or None when it does not exist."""
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM orders WHERE id=?", (order_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_order_gateway_data(order_id: str, gateway_data: dict) -> bool:
+    """Store payment gateway metadata for reconciliation."""
+    with _get_db() as conn:
+        cur = conn.execute(
+            "UPDATE orders SET gateway_data_json=? WHERE id=?",
+            (json.dumps(gateway_data), order_id)
+        )
+    return cur.rowcount > 0
 
 
 def mark_order_paid(
@@ -468,11 +482,12 @@ def mark_order_paid(
     gateway_data = gateway_data or {}
 
     with _get_db() as conn:
-        order = conn.execute(
+        row = conn.execute(
             "SELECT * FROM orders WHERE id=?", (order_id,)
         ).fetchone()
-        if not order:
+        if not row:
             return None
+        order = dict(row)
         if order["status"] == "paid":
             return order["user_id"]  # 幂等
 
@@ -483,15 +498,15 @@ def mark_order_paid(
             (gateway_order_id, json.dumps(gateway_data), now, order_id)
         )
 
-        # 根据订单类型计算有效期
-        if order["plan"] == "ultra" or order["order_type"] == "lifetime":
-            duration_days = 0  # 永久
-        elif order["order_type"] == "yearly":
-            duration_days = 365
-        else:
-            duration_days = 30  # monthly
+    # 根据订单类型计算有效期
+    if order["plan"] == "ultra" or order["order_type"] == "lifetime":
+        duration_days = 0  # 永久
+    elif order["order_type"] == "yearly":
+        duration_days = 365
+    else:
+        duration_days = 30  # monthly
 
-        set_user_plan(order["user_id"], order["plan"], order["order_type"], duration_days)
+    set_user_plan(order["user_id"], order["plan"], order["order_type"], duration_days)
 
     return order["user_id"]
 
@@ -569,8 +584,8 @@ def get_guest_quota(ip_address: str) -> Dict[str, Any]:
         "can_batch_download": False,
         "batch_max_count": 0,
         "can_export_mindmap": False,
-        "max_quality": "720p",
-        "has_watermark": True,
+        "max_quality": "源站可用",
+        "has_watermark": False,
         "is_expired": False,
         "is_guest": True,
     }

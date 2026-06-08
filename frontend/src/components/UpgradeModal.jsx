@@ -149,11 +149,11 @@ export default function UpgradeModal({
                   </span>
                 </div>
                 <p className="text-sm text-dark-500 mt-0.5">
-                  每日 30 次下载 · 10 次 AI 总结 · 4K 画质
+                  每日 30 次下载 · 10 次 AI 总结 · 思维导图
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-xl font-bold text-dark-900">¥29</p>
+                <p className="text-xl font-bold text-dark-900">¥9.9</p>
                 <p className="text-xs text-dark-400">/月</p>
               </div>
             </button>
@@ -176,7 +176,7 @@ export default function UpgradeModal({
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-xl font-bold text-dark-900">¥299</p>
+                <p className="text-xl font-bold text-dark-900">¥199</p>
                 <p className="text-xs text-dark-400">终身买断</p>
               </div>
             </button>
@@ -184,7 +184,9 @@ export default function UpgradeModal({
 
           {/* 底部操作 */}
           <div className="flex items-center justify-between pt-4 border-t border-dark-100">
-            <p className="text-xs text-dark-400">7 天无理由退款 · 安全支付</p>
+            <p className="text-xs text-dark-400">
+              当前为演示订单 · 不会真实扣款
+            </p>
             <button
               onClick={onClose}
               className="text-sm text-dark-500 hover:text-dark-700 font-medium transition-colors"

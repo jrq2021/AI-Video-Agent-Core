@@ -622,8 +622,8 @@ export default function VideoSubtitle({
     );
 
   return (
-    <div className="mt-6">
-      <div className="card overflow-hidden">
+    <div className="h-full">
+      <div className="card overflow-hidden h-full">
         {/* Tab 栏 */}
         <Tabs
           tabs={[

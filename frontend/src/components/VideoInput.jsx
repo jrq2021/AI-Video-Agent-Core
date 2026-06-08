@@ -59,7 +59,7 @@ export default function VideoInput({
           : "免费版";
 
   return (
-    <form onSubmit={handleSubmit} className="mt-8">
+    <form onSubmit={handleSubmit} className="mt-0">
       {/* ── 额度指示条 ── */}
       <div className="flex items-center justify-between mb-3 px-1">
         <div className="flex items-center gap-2 text-sm">

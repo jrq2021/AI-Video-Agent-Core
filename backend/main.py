@@ -7,6 +7,7 @@ import json
 import asyncio
 import queue as std_queue
 import urllib.request
+from decimal import Decimal
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -16,12 +17,21 @@ from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel
 from downloader import VideoDownloader
 from douyin import DouyinParser, is_douyin_url
+from bilibili import BilibiliParser, is_bilibili_url
 from summarizer import summarize_video, parse_video, summarize_text, generate_mindmap, extract_subtitles_segments
 from auth import create_user, authenticate_user, create_token, get_current_user, get_optional_user, get_user_by_id, init_db
 from membership import (
     get_user_quota, check_and_consume_quota, get_all_plans, get_plan_config,
     create_order, mark_order_paid, QuotaInfo, init_membership_db,
-    get_guest_quota, check_and_consume_guest_quota,
+    get_guest_quota, check_and_consume_guest_quota, get_order,
+    update_order_gateway_data,
+)
+from hupijiao import (
+    HUPIJIAO_APPID,
+    HupijiaoConfigError,
+    HupijiaoPaymentError,
+    create_payment as create_hupijiao_payment,
+    verify_hash as verify_hupijiao_hash,
 )
 
 
@@ -52,6 +62,7 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 
 downloader = VideoDownloader(str(DOWNLOAD_DIR))
 douyin_parser = DouyinParser(download_dir=str(DOWNLOAD_DIR))
+bilibili_parser = BilibiliParser(download_dir=str(DOWNLOAD_DIR))
 
 
 class URLRequest(BaseModel):
@@ -229,11 +240,11 @@ async def api_create_order(req: CreateOrderRequest, user: dict = Depends(get_cur
     
     # 计算金额
     if order_type == "lifetime" or plan == "ultra":
-        amount = config.get("price_lifetime", 299)
+        amount = config.get("price_lifetime", 199)
     elif order_type == "yearly":
-        amount = config.get("price_yearly", 199)
+        amount = config.get("price_yearly", 99)
     else:
-        amount = config.get("price_monthly", 29)
+        amount = config.get("price_monthly", 9.9)
     
     if amount <= 0:
         raise HTTPException(status_code=400, detail="该套餐暂不支持此购买方式")
@@ -244,11 +255,25 @@ async def api_create_order(req: CreateOrderRequest, user: dict = Depends(get_cur
         order_type=order_type,
         amount=amount,
         currency="CNY",
-        payment_gateway="lemonsqueezy",  # 默认网关，可配置
+        payment_gateway="hupijiao",
     )
-    
-    # TODO: 实际对接时，这里调用支付网关 API 创建 Checkout Session
-    # checkout_url = lemon_squeezy_create_checkout(order_id, amount, plan)
+
+    title = f"AI Video {config.get('name_en', plan)} {order_type}"
+    try:
+        payment = create_hupijiao_payment(
+            order_id=order_id,
+            amount=amount,
+            title=title,
+            attach=json.dumps(
+                {"user_id": user["id"], "plan": plan, "order_type": order_type},
+                ensure_ascii=False,
+            ),
+        )
+        update_order_gateway_data(order_id, {"create_response": payment["raw"]})
+    except HupijiaoConfigError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except HupijiaoPaymentError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     
     return {
         "success": True,
@@ -257,23 +282,73 @@ async def api_create_order(req: CreateOrderRequest, user: dict = Depends(get_cur
         "currency": "CNY",
         "plan": plan,
         "order_type": order_type,
-        # "checkout_url": checkout_url,  # 支付页面 URL
+        "payment_gateway": "hupijiao",
+        "checkout_url": payment["checkout_url"],
     }
+
+
+@app.post("/api/membership/hupijiao/notify")
+async def hupijiao_notify(request: Request):
+    """虎皮椒支付异步通知：验签、对账、幂等开通会员。"""
+    try:
+        form = await request.form()
+        payload = {key: str(value) for key, value in form.items()}
+    except Exception:
+        return Response("fail", status_code=400, media_type="text/plain")
+
+    try:
+        valid_signature = payload.get("appid") == HUPIJIAO_APPID and verify_hupijiao_hash(payload)
+    except HupijiaoConfigError:
+        valid_signature = False
+    if not valid_signature:
+        return Response("fail", status_code=400, media_type="text/plain")
+
+    order_id = payload.get("trade_order_id", "")
+    order = get_order(order_id)
+    if not order:
+        return Response("fail", status_code=404, media_type="text/plain")
+
+    update_order_gateway_data(order_id, {"notify_payload": payload})
+
+    payment_status = payload.get("status") or payload.get("order_status")
+    if payment_status != "OD":
+        return Response("success", media_type="text/plain")
+
+    try:
+        expected_amount = Decimal(str(order["amount"])).quantize(Decimal("0.01"))
+        actual_amount = Decimal(str(payload.get("total_fee", "0"))).quantize(Decimal("0.01"))
+    except Exception:
+        return Response("fail", status_code=400, media_type="text/plain")
+    if expected_amount != actual_amount:
+        return Response("fail", status_code=400, media_type="text/plain")
+
+    gateway_order_id = (
+        payload.get("transaction_id")
+        or payload.get("open_order_id")
+        or payload.get("order_id")
+        or ""
+    )
+    user_id = mark_order_paid(order_id, gateway_order_id, payload)
+    if not user_id:
+        return Response("fail", status_code=404, media_type="text/plain")
+
+    return Response("success", media_type="text/plain")
 
 
 @app.post("/api/membership/payment-callback")
 async def payment_callback(
     order_id: str = Query(...),
     gateway_order_id: str = Query(""),
+    token: str = Query(""),
 ):
     """
-    支付网关回调接口（简化版）。
-    
-    生产环境中需要：
-    1. 验证 Webhook 签名（防止伪造回调）
-    2. 幂等处理（同一订单多次回调）
-    3. 记录完整的网关原始数据
+    Development-only manual callback.
+    Set DEV_PAYMENT_CALLBACK_TOKEN and pass token=... to use it locally.
     """
+    expected_token = os.environ.get("DEV_PAYMENT_CALLBACK_TOKEN", "")
+    if not expected_token or token != expected_token:
+        raise HTTPException(status_code=403, detail="手动回调已禁用")
+
     user_id = mark_order_paid(order_id, gateway_order_id)
     if not user_id:
         raise HTTPException(status_code=404, detail="订单不存在")
@@ -320,6 +395,8 @@ async def get_video_info(req: URLRequest, request: Request):
     try:
         if is_douyin_url(req.url):
             info = await asyncio.to_thread(douyin_parser.parse, req.url)
+        elif is_bilibili_url(req.url):
+            info = await asyncio.to_thread(bilibili_parser.parse, req.url)
         else:
             info = await asyncio.to_thread(downloader.extract_info, req.url)
 
@@ -415,7 +492,13 @@ async def download_video(req: DownloadRequest, request: Request, user: Optional[
         # 在后台线程中下载（抖音走专用模块，无水印）
         async def run_download():
             if is_douyin_url(req.url):
-                return await asyncio.to_thread(douyin_parser.download, req.url)
+                return await asyncio.to_thread(
+                    douyin_parser.download, req.url, req.format_id, "video", progress_hook
+                )
+            if is_bilibili_url(req.url):
+                return await asyncio.to_thread(
+                    bilibili_parser.download, req.url, req.format_id, progress_hook
+                )
             return await asyncio.to_thread(
                 downloader.download, req.url, req.format_id, progress_hook
             )

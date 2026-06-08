@@ -24,6 +24,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
  */
 
 const API_BASE = ""; // 相对路径，由 Vite 代理
+const MEMBERSHIP_CLICK_KEY = "membership_click_history";
 
 // 游客默认额度（与后端保持一致）
 const GUEST_DEFAULTS = {
@@ -32,7 +33,11 @@ const GUEST_DEFAULTS = {
     daily_summaries_limit: 1,
     daily_downloads_used: 0,
     daily_summaries_used: 0,
+    can_batch_download: false,
+    batch_max_count: 0,
     can_export_mindmap: false,
+    max_quality: "源站可用",
+    has_watermark: false,
     is_guest: true,
 };
 
@@ -40,8 +45,26 @@ export default function useQuota(user) {
     const [quota, setQuota] = useState(GUEST_DEFAULTS);
     const [showUpgrade, setShowUpgrade] = useState(false);
     const [upgradeReason, setUpgradeReason] = useState("");
+    const [orderDialog, setOrderDialog] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
     const quotaRef = useRef(quota);
+
+    const recordMembershipClick = useCallback((entry) => {
+        try {
+            const list = JSON.parse(localStorage.getItem(MEMBERSHIP_CLICK_KEY) || "[]");
+            const item = {
+                id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+                clickedAt: new Date().toLocaleString("zh-CN"),
+                ...entry,
+            };
+            list.unshift(item);
+            if (list.length > 50) list.length = 50;
+            localStorage.setItem(MEMBERSHIP_CLICK_KEY, JSON.stringify(list));
+            return item;
+        } catch {
+            return entry;
+        }
+    }, []);
 
     // 保持 ref 同步
     useEffect(() => {
@@ -150,6 +173,10 @@ export default function useQuota(user) {
         setShowUpgrade(false);
     }, []);
 
+    const closeOrderDialog = useCallback(() => {
+        setOrderDialog(null);
+    }, []);
+
     /**
      * 处理升级操作
      */
@@ -158,6 +185,44 @@ export default function useQuota(user) {
             setIsLoading(true);
             const token = localStorage.getItem("auth_token");
             try {
+                if (plan === "free") {
+                    const record = recordMembershipClick({
+                        plan,
+                        orderType,
+                        status: "free_selected",
+                    });
+                    setOrderDialog({
+                        type: "free",
+                        title: "免费版已可使用",
+                        message: "这次点击已记录。免费版无需购买，回到页面顶部粘贴链接即可开始解析。",
+                        record,
+                    });
+                    return;
+                }
+
+                if (!token) {
+                    const record = recordMembershipClick({
+                        plan,
+                        orderType,
+                        status: "login_required",
+                    });
+                    setOrderDialog({
+                        type: "login_required",
+                        title: "需要先登录",
+                        message: "这次套餐点击已记录。登录后才能创建订单并获得对应额度。",
+                        plan,
+                        orderType,
+                        record,
+                    });
+                    return;
+                }
+
+                const pendingRecord = recordMembershipClick({
+                    plan,
+                    orderType,
+                    status: "creating_order",
+                });
+
                 const res = await fetch(`${API_BASE}/api/membership/create-order`, {
                     method: "POST",
                     headers: {
@@ -168,22 +233,67 @@ export default function useQuota(user) {
                 });
                 const data = await res.json();
                 if (data.success) {
-                    // TODO: 跳转到支付页面
-                    // window.location.href = data.checkout_url;
-                    alert(
-                        `订单已创建（演示模式）\n订单号: ${data.order_id}\n金额: ¥${data.amount}\n套餐: ${plan}\n\n生产环境中将跳转到支付网关完成付款。`
-                    );
+                    const record = recordMembershipClick({
+                        plan,
+                        orderType,
+                        status: data.checkout_url ? "redirecting_to_payment" : "order_created",
+                        orderId: data.order_id,
+                        amount: data.amount,
+                        paymentGateway: data.payment_gateway,
+                    });
+                    if (data.checkout_url) {
+                        setShowUpgrade(false);
+                        window.location.href = data.checkout_url;
+                        return;
+                    }
+                    setOrderDialog({
+                        type: "order_created",
+                        title: "订单已创建",
+                        message: "订单已创建，但支付网关没有返回跳转地址。请稍后重试或联系管理员检查支付配置。",
+                        plan,
+                        orderType,
+                        orderId: data.order_id,
+                        amount: data.amount,
+                        record,
+                    });
                     setShowUpgrade(false);
                 } else {
-                    alert("创建订单失败: " + (data.detail || "未知错误"));
+                    const record = recordMembershipClick({
+                        plan,
+                        orderType,
+                        status: "order_failed",
+                        error: data.detail || "未知错误",
+                        pendingRecordId: pendingRecord?.id,
+                    });
+                    setOrderDialog({
+                        type: "error",
+                        title: "创建订单失败",
+                        message: data.detail || "未知错误",
+                        plan,
+                        orderType,
+                        record,
+                    });
                 }
             } catch (e) {
-                alert("网络错误，请稍后重试");
+                const record = recordMembershipClick({
+                    plan,
+                    orderType,
+                    status: "network_error",
+                    error: e.message,
+                });
+                setOrderDialog({
+                    type: "error",
+                    title: "网络错误",
+                    message: "请稍后重试。",
+                    plan,
+                    orderType,
+                    record,
+                });
             } finally {
                 setIsLoading(false);
             }
         },
-        []
+        [recordMembershipClick]
     );
 
     return {
@@ -193,8 +303,10 @@ export default function useQuota(user) {
         consumeQuota,
         showUpgrade,
         upgradeReason,
+        orderDialog,
         openUpgrade,
         closeUpgrade,
+        closeOrderDialog,
         handleUpgrade,
         isLoading,
     };

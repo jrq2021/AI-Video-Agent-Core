@@ -28,12 +28,11 @@ const PLANS = [
     highlight: false,
     features: [
       { text: "每日 3 次视频下载", included: true },
-      { text: "最高 1080p 画质", included: true },
+      { text: "公开视频直链解析", included: true },
       { text: "每日 1 次 AI 智能总结", included: true },
       { text: "基础字幕提取", included: true },
-      { text: "批量下载", included: false },
       { text: "思维导图导出", included: false },
-      { text: "无水印下载", included: false },
+      { text: "批量下载", included: false },
       { text: "优先技术支持", included: false },
     ],
   },
@@ -42,19 +41,18 @@ const PLANS = [
     name: "专业版",
     nameEn: "Pro",
     desc: "适合重度视频用户",
-    priceMonthly: 29,
-    priceYearly: 199,
+    priceMonthly: 9.9,
+    priceYearly: 99,
     cta: "立即升级",
     highlight: true, // 高亮推荐
     badge: "最受欢迎",
     features: [
       { text: "每日 30 次视频下载", included: true, highlight: true },
-      { text: "最高 4K 超清画质", included: true, highlight: true },
       { text: "每日 10 次 AI 智能总结", included: true },
-      { text: "字幕提取 + 导出", included: true },
-      { text: "批量下载（最多 10 个）", included: true },
-      { text: "思维导图导出", included: true },
-      { text: "无水印下载", included: true },
+      { text: "字幕提取 + SRT/VTT 导出", included: true },
+      { text: "思维导图生成与导出", included: true },
+      { text: "B站 / 抖音专项解析", included: true },
+      { text: "批量下载（开发中）", included: false },
       { text: "优先技术支持", included: false },
     ],
   },
@@ -63,19 +61,18 @@ const PLANS = [
     name: "旗舰版",
     nameEn: "Ultra",
     desc: "终身买断，一劳永逸",
-    priceLifetime: 299,
+    priceLifetime: 199,
     cta: "终身买断",
     highlight: false,
     badge: "最划算",
     features: [
       { text: "每日 100 次视频下载", included: true, highlight: true },
-      { text: "最高 4K 超清画质", included: true, highlight: true },
       { text: "每日 50 次 AI 智能总结", included: true, highlight: true },
       { text: "字幕提取 + 导出", included: true },
-      { text: "无限批量下载", included: true },
-      { text: "思维导图导出（全格式）", included: true },
-      { text: "无水印高速下载", included: true },
-      { text: "优先技术支持", included: true },
+      { text: "思维导图导出（SVG/PNG）", included: true },
+      { text: "B站 / 抖音专项解析", included: true },
+      { text: "批量下载（开发中）", included: false },
+      { text: "优先技术支持（待接入）", included: false },
     ],
   },
 ];
@@ -105,7 +102,7 @@ export default function PricingSection({
           </span>
         </h2>
         <p className="mt-4 text-lg text-dark-500 max-w-2xl mx-auto">
-          从免费版开始，随需求升级。所有套餐均支持 7 天无理由退款。
+          从免费版开始，按使用强度升级；页面只展示已上线或明确标注未开放的权益。
         </p>
 
         {/* 月付/年付切换（仅影响 Pro） */}
@@ -130,7 +127,7 @@ export default function PricingSection({
           >
             年付
             <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">
-              省 43%
+              省 17%
             </span>
           </button>
         </div>
@@ -212,7 +209,7 @@ export default function PricingSection({
                 {/* 年付优惠提示 */}
                 {plan.id === "pro" && billingCycle === "yearly" && (
                   <p className="text-sm text-green-600 mt-1">
-                    约 ¥16.6/月，比月付省 ¥149
+                    约 ¥8.3/月，比月付省 ¥19.8
                   </p>
                 )}
               </div>
@@ -300,13 +297,11 @@ export default function PricingSection({
 
       {/* 底部说明 */}
       <p className="text-center text-sm text-dark-400 mt-10">
-        所有套餐价格均为含税价格。升级后立即生效，Pro 订阅可随时取消。
+        当前价格用于演示套餐和额度逻辑。正式支付接入后，升级会在支付成功后立即生效。
         <br />
-        我们支持{" "}
-        <span className="text-dark-600 font-medium">
-          支付宝 / 微信支付 / 国际信用卡
-        </span>
-        ，由 Lemon Squeezy 安全处理。
+        已上线权益以页面勾选项为准；批量下载、去水印、优先技术支持仍需单独开发后再开放。
+        {/* 保持二行说明，避免套餐底部视觉过空 */}
+        <span className="sr-only">套餐功能说明</span>
       </p>
     </section>
   );

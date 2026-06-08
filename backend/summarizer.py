@@ -366,6 +366,15 @@ def is_bilibili_url(url: str) -> bool:
     return "bilibili.com" in url or "b23.tv" in url
 
 
+def _is_douyin_url(url: str) -> bool:
+    """判断是否为抖音链接，避免 summarizer 继续走 yt-dlp 旧链路。"""
+    try:
+        from douyin import is_douyin_url
+        return is_douyin_url(url)
+    except Exception:
+        return "douyin.com" in url or "iesdouyin.com" in url or "v.douyin.com" in url
+
+
 def _extract_bilibili_meta(url: str) -> dict:
     """通过 B站 API 获取视频元数据（标题、UP主、简介）"""
     import re, json, urllib.request
@@ -393,6 +402,24 @@ def _extract_bilibili_meta(url: str) -> dict:
         return {}
 
 
+def _extract_douyin_meta(url: str) -> dict:
+    """通过 DouyinParser 获取抖音元数据（无需登录 Cookie）。"""
+    try:
+        from douyin import DouyinParser
+
+        parser = DouyinParser(download_dir=tempfile.gettempdir())
+        info = parser.parse(url)
+        title = info.get("title", "") or ""
+        return {
+            "title": title,
+            "uploader": info.get("uploader", "") or "",
+            "description": (info.get("description", "") or title)[:500],
+        }
+    except Exception as e:
+        logger.warning(f"抖音元数据获取失败: {e}")
+        return {}
+
+
 def extract_video_data(url: str, max_chars: int = 8000) -> dict:
     """
     一站式提取视频元数据 + 字幕。
@@ -400,6 +427,12 @@ def extract_video_data(url: str, max_chars: int = 8000) -> dict:
     其他平台：yt-dlp 获取元数据 + 字幕
     返回 {"title", "uploader", "description", "subtitle_text"}
     """
+    # 抖音专用路径：复用已修好的 DouyinParser，避免 yt-dlp 拿不到标题/字幕。
+    if _is_douyin_url(url):
+        meta = _extract_douyin_meta(url)
+        meta["subtitle_text"] = ""
+        return meta
+
     # B站专用路径
     if is_bilibili_url(url):
         meta = _extract_bilibili_meta(url)
@@ -545,6 +578,15 @@ def download_audio(url: str) -> Optional[str]:
         tmp_dir.mkdir(exist_ok=True)
         out_template = str(tmp_dir / "%(id)s.%(ext)s")
 
+        # 抖音需要专用签名/访客 Cookie 链路；复用转写模块里已验证的实现。
+        if _is_douyin_url(url):
+            try:
+                from transcriber import _douyin_download_audio
+                return _douyin_download_audio(url, str(tmp_dir))
+            except Exception as e:
+                logger.warning(f"抖音音频下载失败: {e}")
+                return None
+
         opts = {
             "quiet": True,
             "no_warnings": True,
@@ -688,8 +730,17 @@ def parse_video(url: str) -> dict:
     title = data.get("title", "")
     logger.info(f"parse_video: 标题={title[:50]}")
 
-    # 提取带时间轴的字幕
-    sub_result = extract_subtitles_segments(url)
+    # 提取带时间轴的字幕。抖音通常没有可直接拉取的官方字幕，跳过 yt-dlp 旧链路。
+    if _is_douyin_url(url):
+        sub_result = {
+            "has_subtitle": False,
+            "language": "",
+            "subtitle_type": "none",
+            "segments": [],
+            "full_text": data.get("subtitle_text", "") or "",
+        }
+    else:
+        sub_result = extract_subtitles_segments(url)
     has_sub = sub_result.get("has_subtitle", False)
     segments = sub_result.get("segments", [])
     subtitle_text = sub_result.get("full_text", "")

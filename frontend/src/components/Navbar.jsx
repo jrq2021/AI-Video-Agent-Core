@@ -16,8 +16,16 @@ const PLAN_STYLES = {
   guest: { bg: "bg-dark-100", text: "text-dark-500", label: "游客" },
 };
 
-export default function Navbar({ user, quota, onAuthClick, onLogout }) {
+export default function Navbar({
+  user,
+  quota,
+  onAuthClick,
+  onLogout,
+  theme = "cinematic",
+  onThemeToggle,
+}) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const isVivid = theme === "cinematic";
 
   const handleNavClick = (e, href) => {
     e.preventDefault();
@@ -74,6 +82,38 @@ export default function Navbar({ user, quota, onAuthClick, onLogout }) {
 
           {/* Right side */}
           <div className="hidden md:flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onThemeToggle}
+              className="theme-toggle"
+              aria-label={isVivid ? "切换到原版主题" : "切换到活力主题"}
+              title={isVivid ? "原版主题" : "活力主题"}
+            >
+              <span className="theme-toggle__icon" aria-hidden="true">
+                {isVivid ? (
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M12 4V2M12 22v-2M4.93 4.93 3.52 3.52M20.48 20.48l-1.41-1.41M4 12H2M22 12h-2M4.93 19.07l-1.41 1.41M20.48 3.52l-1.41 1.41M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M20.3 14.35A7.9 7.9 0 0 1 9.65 3.7 8.2 8.2 0 1 0 20.3 14.35Z"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )}
+              </span>
+              <span>{isVivid ? "原版" : "活力"}</span>
+            </button>
+
             {user ? (
               <>
                 {/* ── 会员等级徽章 + 额度 ── */}
@@ -178,6 +218,36 @@ export default function Navbar({ user, quota, onAuthClick, onLogout }) {
               </a>
             ))}
             <div className="flex gap-3 mt-3">
+              <button
+                type="button"
+                onClick={onThemeToggle}
+                className="theme-toggle flex-1 justify-center"
+                aria-label={isVivid ? "切换到原版主题" : "切换到活力主题"}
+              >
+                <span className="theme-toggle__icon" aria-hidden="true">
+                  {isVivid ? (
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M12 4V2M12 22v-2M4.93 4.93 3.52 3.52M20.48 20.48l-1.41-1.41M4 12H2M22 12h-2M4.93 19.07l-1.41 1.41M20.48 3.52l-1.41 1.41M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"
+                        stroke="currentColor"
+                        strokeWidth="1.7"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M20.3 14.35A7.9 7.9 0 0 1 9.65 3.7 8.2 8.2 0 1 0 20.3 14.35Z"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </span>
+                <span>{isVivid ? "原版" : "活力"}</span>
+              </button>
               {user ? (
                 <button
                   onClick={onLogout}

@@ -43,7 +43,6 @@ export default function VideoInfo({
     ? quota.daily_downloads_limit - quota.daily_downloads_used
     : null;
   const isFreeUser = quota?.plan === "free";
-  const hasWatermark = quota?.has_watermark ?? true;
 
   // 通过后端代理加载缩略图（绕过防盗链）
   const thumbnailUrl = data.thumbnail
@@ -330,35 +329,6 @@ export default function VideoInfo({
               </div>
             )}
           </div>
-          {/* ── 免费用户水印提示 ── */}
-          {isFreeUser && hasWatermark && (
-            <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-100 rounded-lg flex items-center gap-2 text-xs text-amber-700">
-              <svg
-                className="w-4 h-4 flex-shrink-0"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
-                />
-              </svg>
-              <span>
-                免费版下载视频将包含水印，
-                <button
-                  onClick={() =>
-                    openUpgrade?.("升级 Pro 去除水印，享受无水印下载")
-                  }
-                  className="underline font-medium hover:text-amber-800"
-                >
-                  升级去水印
-                </button>
-              </span>
-            </div>
-          )}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {availableFormats.map((f) => {
               const isSelected = selectedFormat === f.format_id;
@@ -368,6 +338,9 @@ export default function VideoInfo({
                 ? parseInt(f.resolution.replace("p", ""))
                 : 0;
               const sizeStr = formatSize(f.filesize || f.filesize_approx || 0);
+              const hasAudio =
+                f.has_audio === true ||
+                (f.acodec && f.acodec !== "none");
               return (
                 <button
                   key={f.format_id}
@@ -441,7 +414,7 @@ export default function VideoInfo({
                   </span>
                   <span className="text-xs text-dark-400 mt-0.5">
                     {f.ext?.toUpperCase()}
-                    {f.has_audio ? " · 有音" : " · 无声"}
+                    {hasAudio ? " · 有音" : " · 无声"}
                   </span>
                   {sizeStr !== "未知" && (
                     <span className="text-xs text-dark-300 mt-0.5">

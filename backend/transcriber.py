@@ -491,8 +491,9 @@ def _douyin_get_video_url(url: str) -> Optional[str]:
         # info["formats"] 第一个是无水印 mp4
         formats = info.get("formats", [])
         for f in formats:
-            if f.get("ext") == "mp4" and f.get("direct_url"):
-                return f["direct_url"]
+            direct_url = f.get("_direct_url") or f.get("direct_url")
+            if f.get("ext") == "mp4" and direct_url:
+                return direct_url
         # 回退：用 download 方法
         return None
     except Exception as e:
