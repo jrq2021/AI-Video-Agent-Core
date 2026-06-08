@@ -24,7 +24,7 @@ from membership import (
     get_user_quota, check_and_consume_quota, get_all_plans, get_plan_config,
     create_order, mark_order_paid, QuotaInfo, init_membership_db,
     get_guest_quota, check_and_consume_guest_quota, get_order,
-    update_order_gateway_data,
+    update_order_gateway_data, redeem_membership_coupon,
 )
 from hupijiao import (
     HUPIJIAO_APPID,
@@ -220,6 +220,45 @@ async def my_quota_optional(request: Request):
 class CreateOrderRequest(BaseModel):
     plan: str          # pro / ultra
     order_type: str = "monthly"  # monthly / yearly / lifetime
+
+
+class RedeemCodeRequest(BaseModel):
+    code: str
+
+
+def serialize_quota(quota: QuotaInfo) -> dict:
+    return {
+        "plan": quota.plan,
+        "daily_downloads_limit": quota.daily_downloads_limit,
+        "daily_summaries_limit": quota.daily_summaries_limit,
+        "daily_downloads_used": quota.daily_downloads_used,
+        "daily_summaries_used": quota.daily_summaries_used,
+        "can_batch_download": quota.can_batch_download,
+        "batch_max_count": quota.batch_max_count,
+        "can_export_mindmap": quota.can_export_mindmap,
+        "max_quality": quota.max_quality,
+        "has_watermark": quota.has_watermark,
+        "is_expired": quota.is_expired,
+        "expires_at": quota.expires_at,
+        "is_guest": False,
+    }
+
+
+@app.post("/api/membership/redeem-code")
+async def redeem_code(req: RedeemCodeRequest, user: dict = Depends(get_current_user)):
+    """Redeem a Xianyu/manual coupon code and unlock the matching membership."""
+    try:
+        redemption = redeem_membership_coupon(user["id"], req.code)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    quota = get_user_quota(user["id"])
+    return {
+        "success": True,
+        "message": "兑换成功，会员已开通",
+        "redemption": redemption,
+        "quota": serialize_quota(quota),
+    }
 
 
 @app.post("/api/membership/create-order")

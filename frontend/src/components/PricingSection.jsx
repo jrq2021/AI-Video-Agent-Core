@@ -80,11 +80,50 @@ const PLANS = [
 export default function PricingSection({
   currentUser,
   onUpgrade,
+  onRedeemCode,
+  onAuthClick,
   isLoading = false,
 }) {
   const [billingCycle, setBillingCycle] = useState("monthly"); // monthly | yearly
+  const [couponCode, setCouponCode] = useState("");
+  const [redeemStatus, setRedeemStatus] = useState(null);
+  const [isRedeeming, setIsRedeeming] = useState(false);
 
   const isCurrentPlan = (planId) => currentUser?.plan === planId;
+
+  const handleRedeemSubmit = async (event) => {
+    event.preventDefault();
+    const code = couponCode.trim();
+    if (!code) {
+      setRedeemStatus({ type: "error", message: "请输入兑换码" });
+      return;
+    }
+    if (!currentUser) {
+      setRedeemStatus({ type: "info", message: "请先登录账号，再兑换会员码" });
+      onAuthClick?.();
+      return;
+    }
+    if (!onRedeemCode) return;
+
+    setIsRedeeming(true);
+    setRedeemStatus(null);
+    try {
+      const data = await onRedeemCode(code);
+      const plan = data.redemption?.plan === "ultra" ? "Ultra" : "Pro";
+      setCouponCode("");
+      setRedeemStatus({
+        type: "success",
+        message: `${plan} 会员已开通，当前额度已刷新`,
+      });
+    } catch (error) {
+      setRedeemStatus({
+        type: "error",
+        message: error.message || "兑换失败，请检查兑换码",
+      });
+    } finally {
+      setIsRedeeming(false);
+    }
+  };
 
   return (
     <section
@@ -132,6 +171,46 @@ export default function PricingSection({
           </button>
         </div>
       </div>
+
+      <form
+        onSubmit={handleRedeemSubmit}
+        className="mx-auto mb-10 flex max-w-3xl flex-col gap-3 rounded-2xl border border-primary-100 bg-white/85 p-4 shadow-sm shadow-blue-500/5 backdrop-blur sm:flex-row sm:items-center"
+      >
+        <div className="min-w-0 flex-1">
+          <label className="mb-1 block text-sm font-semibold text-dark-800">
+            会员兑换码
+          </label>
+          <input
+            value={couponCode}
+            onChange={(event) => {
+              setCouponCode(event.target.value.toUpperCase());
+              setRedeemStatus(null);
+            }}
+            placeholder="输入咸鱼购买后收到的券码"
+            className="w-full rounded-xl border border-dark-200 bg-white px-4 py-2.5 text-sm font-semibold tracking-wide text-dark-900 outline-none transition focus:border-primary-400 focus:ring-4 focus:ring-primary-50"
+          />
+          {redeemStatus && (
+            <p
+              className={`mt-2 text-xs font-medium ${
+                redeemStatus.type === "success"
+                  ? "text-green-600"
+                  : redeemStatus.type === "info"
+                    ? "text-primary-600"
+                    : "text-red-500"
+              }`}
+            >
+              {redeemStatus.message}
+            </p>
+          )}
+        </div>
+        <button
+          type="submit"
+          disabled={isRedeeming}
+          className="shrink-0 rounded-xl bg-dark-900 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-dark-900/10 transition hover:bg-dark-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isRedeeming ? "兑换中..." : "立即兑换"}
+        </button>
+      </form>
 
       {/* 三栏卡片 */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">

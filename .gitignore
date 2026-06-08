@@ -46,6 +46,7 @@ logs/
 # temp
 *.tmp
 temp/
+/frontend-dist.zip
 
 # Python virtual env (if outside project root)
 .venv/

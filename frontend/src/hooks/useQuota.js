@@ -296,6 +296,35 @@ export default function useQuota(user) {
         [recordMembershipClick]
     );
 
+    const redeemCode = useCallback(
+        async (code) => {
+            const token = localStorage.getItem("auth_token");
+            if (!token) {
+                throw new Error("请先登录后再兑换会员码");
+            }
+
+            const res = await fetch(`${API_BASE}/api/membership/redeem-code`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({ code }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) {
+                throw new Error(data.detail || "兑换失败，请检查兑换码");
+            }
+            if (data.quota) {
+                setQuota(data.quota);
+            } else {
+                await fetchQuota();
+            }
+            return data;
+        },
+        [fetchQuota]
+    );
+
     return {
         quota,
         fetchQuota,
@@ -308,6 +337,7 @@ export default function useQuota(user) {
         closeUpgrade,
         closeOrderDialog,
         handleUpgrade,
+        redeemCode,
         isLoading,
     };
 }

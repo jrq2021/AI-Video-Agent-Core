@@ -20,6 +20,7 @@ import os
 import time
 import sqlite3
 import json
+import secrets
 from pathlib import Path
 from datetime import datetime, timedelta
 from enum import Enum
@@ -163,6 +164,33 @@ def init_membership_db():
                 video_title TEXT DEFAULT '',
                 consumed_at INTEGER NOT NULL,
                 ip_address TEXT DEFAULT ''
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS coupon_codes (
+                code TEXT PRIMARY KEY,
+                plan TEXT NOT NULL,
+                order_type TEXT NOT NULL DEFAULT 'monthly',
+                status TEXT NOT NULL DEFAULT 'active',
+                max_redemptions INTEGER NOT NULL DEFAULT 1,
+                redeemed_count INTEGER NOT NULL DEFAULT 0,
+                redeemed_by TEXT DEFAULT '',
+                redeemed_at INTEGER DEFAULT 0,
+                expires_at INTEGER DEFAULT 0,
+                note TEXT DEFAULT '',
+                created_at INTEGER NOT NULL
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS coupon_redemptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                plan TEXT NOT NULL,
+                order_type TEXT NOT NULL,
+                redeemed_at INTEGER NOT NULL
             )
         """)
 
@@ -426,6 +454,153 @@ def set_user_plan(
             (plan, expires_at, now, user_id)
         )
     return True
+
+
+def _membership_duration_days(plan: str, order_type: str) -> int:
+    if plan == "ultra" or order_type == "lifetime":
+        return 0
+    if order_type == "yearly":
+        return 365
+    return 30
+
+
+def _normalize_coupon_code(code: str) -> str:
+    return "".join(str(code or "").upper().strip().split())
+
+
+def generate_coupon_code(prefix: str = "JD") -> str:
+    """Generate a human-friendly coupon code for manual sales channels."""
+    body = secrets.token_urlsafe(9).upper().replace("-", "").replace("_", "")
+    return f"{prefix}-{body[:4]}-{body[4:8]}-{body[8:12]}"
+
+
+def create_membership_coupon(
+    plan: str,
+    order_type: str = "monthly",
+    code: str = "",
+    expires_days: int = 0,
+    note: str = "",
+    max_redemptions: int = 1,
+) -> str:
+    """Create a membership coupon and return the generated/normalized code."""
+    if plan not in ("pro", "ultra"):
+        raise ValueError("券码套餐必须是 pro 或 ultra")
+    if order_type not in ("monthly", "yearly", "lifetime"):
+        raise ValueError("券码类型必须是 monthly/yearly/lifetime")
+    if plan == "ultra":
+        order_type = "lifetime"
+
+    now = int(time.time())
+    expires_at = now + expires_days * 86400 if expires_days > 0 else 0
+    max_redemptions = max(1, int(max_redemptions or 1))
+    normalized_code = _normalize_coupon_code(code) if code else generate_coupon_code()
+
+    with _get_db() as conn:
+        conn.execute(
+            """INSERT INTO coupon_codes
+               (code, plan, order_type, status, max_redemptions, redeemed_count,
+                expires_at, note, created_at)
+               VALUES (?, ?, ?, 'active', ?, 0, ?, ?, ?)""",
+            (
+                normalized_code,
+                plan,
+                order_type,
+                max_redemptions,
+                expires_at,
+                note,
+                now,
+            )
+        )
+    return normalized_code
+
+
+def redeem_membership_coupon(user_id: str, code: str) -> Dict[str, Any]:
+    """Redeem a coupon code and activate the corresponding membership."""
+    normalized_code = _normalize_coupon_code(code)
+    if not normalized_code:
+        raise ValueError("请输入兑换码")
+
+    now = int(time.time())
+    today = _get_today_str()
+
+    with _get_db() as conn:
+        coupon = conn.execute(
+            "SELECT * FROM coupon_codes WHERE code=?",
+            (normalized_code,)
+        ).fetchone()
+        if not coupon:
+            raise ValueError("兑换码不存在")
+        if coupon["status"] != "active":
+            raise ValueError("兑换码已失效")
+        if coupon["expires_at"] and coupon["expires_at"] < now:
+            conn.execute(
+                "UPDATE coupon_codes SET status='expired' WHERE code=?",
+                (normalized_code,)
+            )
+            raise ValueError("兑换码已过期")
+        if coupon["redeemed_count"] >= coupon["max_redemptions"]:
+            raise ValueError("兑换码已被使用")
+
+        plan = coupon["plan"]
+        order_type = coupon["order_type"]
+        duration_days = _membership_duration_days(plan, order_type)
+
+        _ensure_user_membership(conn, user_id)
+        _reset_daily_usage_if_needed(conn, user_id, today)
+
+        membership = conn.execute(
+            "SELECT * FROM user_membership WHERE user_id=?",
+            (user_id,)
+        ).fetchone()
+
+        if membership and membership["plan"] == "ultra":
+            raise ValueError("当前账号已是 Ultra 永久会员，无需重复兑换")
+
+        if plan == "ultra" or duration_days == 0:
+            expires_at = 0
+        else:
+            base_time = now
+            if membership and membership["plan"] == plan and membership["expires_at"] > now:
+                base_time = membership["expires_at"]
+            expires_at = base_time + duration_days * 86400
+
+        new_count = coupon["redeemed_count"] + 1
+        new_status = "used" if new_count >= coupon["max_redemptions"] else "active"
+        cur = conn.execute(
+            """UPDATE coupon_codes
+               SET redeemed_count=?, status=?, redeemed_by=?, redeemed_at=?
+               WHERE code=? AND status='active' AND redeemed_count=?""",
+            (
+                new_count,
+                new_status,
+                user_id,
+                now,
+                normalized_code,
+                coupon["redeemed_count"],
+            )
+        )
+        if cur.rowcount != 1:
+            raise ValueError("兑换码已被使用，请刷新后重试")
+
+        conn.execute(
+            """UPDATE user_membership
+               SET plan=?, expires_at=?, updated_at=?
+               WHERE user_id=?""",
+            (plan, expires_at, now, user_id)
+        )
+        conn.execute(
+            """INSERT INTO coupon_redemptions
+               (code, user_id, plan, order_type, redeemed_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (normalized_code, user_id, plan, order_type, now)
+        )
+
+    return {
+        "code": normalized_code,
+        "plan": plan,
+        "order_type": order_type,
+        "expires_at": expires_at,
+    }
 
 
 def create_order(

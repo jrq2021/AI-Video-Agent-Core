@@ -76,7 +76,18 @@ export default function VideoInfo({
     })
     .slice(0, 15);
 
-  const handleDownload = async () => {
+  const triggerBrowserDownload = (filename) => {
+    if (!filename) return;
+    const link = document.createElement("a");
+    link.href = `/api/file/${encodeURIComponent(filename)}`;
+    link.download = filename;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
+  const handleDownload = async (formatId = selectedFormat) => {
     // ── 前端额度预检 ──
     if (checkQuota) {
       const check = checkQuota("download");
@@ -91,7 +102,8 @@ export default function VideoInfo({
     }
 
     setDownloadState("downloading");
-    setProgress(null);
+    setDownloadFilename("");
+    setProgress({ percent: 0, speed: 0, eta: 0, downloaded: 0, total: 0 });
 
     try {
       const token = localStorage.getItem("auth_token");
@@ -103,7 +115,7 @@ export default function VideoInfo({
         },
         body: JSON.stringify({
           url: data.webpage_url,
-          format_id: selectedFormat,
+          format_id: formatId,
         }),
       });
 
@@ -145,12 +157,15 @@ export default function VideoInfo({
                 eventData.status === "finished" ||
                 eventData.status === "completed"
               ) {
+                const filename = eventData.filename || "";
                 setDownloadState("completed");
-                setDownloadFilename(eventData.filename || "");
+                setProgress((current) => ({ ...(current || {}), percent: 100 }));
+                setDownloadFilename(filename);
+                triggerBrowserDownload(filename);
                 // ── 下载成功后刷新额度 ──
                 if (consumeQuota) consumeQuota();
                 if (onDownloadComplete) {
-                  onDownloadComplete(data, eventData.filename || "");
+                  onDownloadComplete(data, filename);
                 }
               } else if (eventData.status === "error") {
                 setDownloadState("error");
@@ -167,12 +182,7 @@ export default function VideoInfo({
   };
 
   const handleDownloadFile = () => {
-    if (downloadFilename) {
-      window.open(
-        `/api/file/${encodeURIComponent(downloadFilename)}`,
-        "_blank",
-      );
-    }
+    triggerBrowserDownload(downloadFilename);
   };
 
   return (
@@ -347,7 +357,7 @@ export default function VideoInfo({
                   onClick={() => {
                     if (downloadState === "downloading") return;
                     setSelectedFormat(f.format_id);
-                    handleDownload();
+                    handleDownload(f.format_id);
                   }}
                   disabled={downloadState === "downloading"}
                   className={`relative flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-300 group ${

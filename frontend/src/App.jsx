@@ -41,8 +41,15 @@ export default function App() {
     closeUpgrade,
     closeOrderDialog,
     handleUpgrade,
+    redeemCode,
     isLoading: isUpgrading,
   } = useQuota(user);
+
+  const currentPlan =
+    quota && !quota.is_guest && quota.plan !== "guest"
+      ? quota.plan
+      : user?.plan || "free";
+  const membershipUser = user ? { ...user, plan: currentPlan } : null;
 
   useEffect(() => {
     const token = localStorage.getItem("auth_token");
@@ -200,8 +207,10 @@ export default function App() {
 
         <FeaturesSection />
         <PricingSection
-          currentUser={user}
+          currentUser={membershipUser}
           onUpgrade={handleUpgrade}
+          onRedeemCode={redeemCode}
+          onAuthClick={() => setAuthOpen(true)}
           isLoading={isUpgrading}
         />
         <FAQSection />
@@ -212,7 +221,7 @@ export default function App() {
       <UpgradeModal
         show={showUpgrade && !!user}
         reason={upgradeReason}
-        currentUser={user}
+        currentUser={membershipUser}
         onUpgrade={handleUpgrade}
         onClose={closeUpgrade}
         isLoading={isUpgrading}
