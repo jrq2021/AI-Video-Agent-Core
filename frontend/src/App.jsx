@@ -222,9 +222,7 @@ export default function App() {
         show={showUpgrade && !!user}
         reason={upgradeReason}
         currentUser={membershipUser}
-        onUpgrade={handleUpgrade}
         onClose={closeUpgrade}
-        isLoading={isUpgrading}
       />
       <AuthModal
         isOpen={showUpgrade && !user}

@@ -1,5 +1,3 @@
-import PricingSection from "./PricingSection";
-
 /**
  * UpgradeModal — 付费墙拦截弹窗
  *
@@ -23,15 +21,26 @@ export default function UpgradeModal({
   show,
   reason,
   currentUser,
-  onUpgrade,
   onClose,
-  isLoading = false,
 }) {
   if (!show) return null;
 
   // ESC 关闭
   const handleKeyDown = (e) => {
     if (e.key === "Escape") onClose();
+  };
+
+  const goRedeem = () => {
+    onClose?.();
+    window.setTimeout(() => {
+      document.getElementById("pricing")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+      document.getElementById("membership-code-input")?.focus({
+        preventScroll: true,
+      });
+    }, 0);
   };
 
   return (
@@ -133,14 +142,9 @@ export default function UpgradeModal({
             </div>
           )}
 
-          {/* 快捷升级选项 */}
+          {/* 券码开通选项 */}
           <div className="space-y-3 mb-6">
-            {/* Pro 月付 */}
-            <button
-              onClick={() => onUpgrade("pro", "monthly")}
-              disabled={isLoading || currentUser?.plan === "ultra"}
-              className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-primary-500 bg-primary-50/50 hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed group"
-            >
+            <div className="w-full flex items-center justify-between gap-4 p-4 rounded-xl border-2 border-primary-500 bg-primary-50/50">
               <div className="text-left">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-dark-900">专业版 Pro</span>
@@ -156,14 +160,9 @@ export default function UpgradeModal({
                 <p className="text-xl font-bold text-dark-900">¥9.9</p>
                 <p className="text-xs text-dark-400">/月</p>
               </div>
-            </button>
+            </div>
 
-            {/* Ultra 终身 */}
-            <button
-              onClick={() => onUpgrade("ultra", "lifetime")}
-              disabled={isLoading || currentUser?.plan === "ultra"}
-              className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-purple-300 hover:border-purple-500 bg-purple-50/30 hover:bg-purple-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed group"
-            >
+            <div className="w-full flex items-center justify-between gap-4 p-4 rounded-xl border-2 border-purple-300 bg-purple-50/30">
               <div className="text-left">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-dark-900">旗舰版 Ultra</span>
@@ -179,13 +178,20 @@ export default function UpgradeModal({
                 <p className="text-xl font-bold text-dark-900">¥199</p>
                 <p className="text-xs text-dark-400">终身买断</p>
               </div>
-            </button>
+            </div>
           </div>
+
+          <button
+            onClick={goRedeem}
+            className="w-full rounded-xl bg-primary-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-primary-600/25 transition hover:bg-primary-700 active:scale-[0.98]"
+          >
+            去兑换会员码
+          </button>
 
           {/* 底部操作 */}
           <div className="flex items-center justify-between pt-4 border-t border-dark-100">
             <p className="text-xs text-dark-400">
-              当前为演示订单 · 不会真实扣款
+              当前仅支持卡券解锁
             </p>
             <button
               onClick={onClose}

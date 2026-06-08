@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 /**
  * PricingSection — 会员套餐定价卡片组件
@@ -43,7 +43,7 @@ const PLANS = [
     desc: "适合重度视频用户",
     priceMonthly: 9.9,
     priceYearly: 99,
-    cta: "立即升级",
+    cta: "输入券码解锁",
     highlight: true, // 高亮推荐
     badge: "最受欢迎",
     features: [
@@ -62,7 +62,7 @@ const PLANS = [
     nameEn: "Ultra",
     desc: "终身买断，一劳永逸",
     priceLifetime: 199,
-    cta: "终身买断",
+    cta: "输入券码解锁",
     highlight: false,
     badge: "最划算",
     features: [
@@ -88,8 +88,30 @@ export default function PricingSection({
   const [couponCode, setCouponCode] = useState("");
   const [redeemStatus, setRedeemStatus] = useState(null);
   const [isRedeeming, setIsRedeeming] = useState(false);
+  const couponInputRef = useRef(null);
 
   const isCurrentPlan = (planId) => currentUser?.plan === planId;
+
+  const focusCouponInput = () => {
+    couponInputRef.current?.focus();
+    couponInputRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  };
+
+  const handleCouponOnlyPlan = (plan) => {
+    if (!currentUser) {
+      setRedeemStatus({ type: "info", message: "请先登录账号，再兑换会员码" });
+      onAuthClick?.();
+    } else {
+      setRedeemStatus({
+        type: "info",
+        message: `${plan.nameEn} 目前通过会员兑换码开通，请输入已收到的券码`,
+      });
+    }
+    focusCouponInput();
+  };
 
   const handleRedeemSubmit = async (event) => {
     event.preventDefault();
@@ -181,6 +203,8 @@ export default function PricingSection({
             会员兑换码
           </label>
           <input
+            id="membership-code-input"
+            ref={couponInputRef}
             value={couponCode}
             onChange={(event) => {
               setCouponCode(event.target.value.toUpperCase());
@@ -216,6 +240,7 @@ export default function PricingSection({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
         {PLANS.map((plan) => {
           const isActive = isCurrentPlan(plan.id);
+          const ctaText = plan.cta;
 
           // 计算展示价格
           let priceDisplay, periodLabel;
@@ -349,16 +374,14 @@ export default function PricingSection({
               <button
                 onClick={() => {
                   if (!isActive) {
-                    const orderType =
-                      plan.id === "ultra"
-                        ? "lifetime"
-                        : billingCycle === "yearly"
-                          ? "yearly"
-                          : "monthly";
-                    onUpgrade(plan.id, orderType);
+                    if (plan.id === "free") {
+                      onUpgrade?.(plan.id, "monthly");
+                      return;
+                    }
+                    handleCouponOnlyPlan(plan);
                   }
                 }}
-                disabled={isActive || isLoading}
+                disabled={isActive || (plan.id === "free" && isLoading)}
                 className={`w-full py-3 rounded-xl text-sm font-semibold transition-all duration-200 ${
                   isActive
                     ? "bg-dark-100 text-dark-400 cursor-not-allowed"
@@ -367,7 +390,11 @@ export default function PricingSection({
                       : "bg-dark-900 text-white hover:bg-dark-800 shadow-lg shadow-dark-900/10 active:scale-[0.98]"
                 } disabled:opacity-60`}
               >
-                {isActive ? "当前套餐" : isLoading ? "处理中..." : plan.cta}
+                {isActive
+                  ? "当前套餐"
+                  : plan.id === "free" && isLoading
+                    ? "处理中..."
+                    : ctaText}
               </button>
             </div>
           );
@@ -376,9 +403,9 @@ export default function PricingSection({
 
       {/* 底部说明 */}
       <p className="text-center text-sm text-dark-400 mt-10">
-        当前价格用于演示套餐和额度逻辑。正式支付接入后，升级会在支付成功后立即生效。
+        当前会员通过兑换码开通；价格用于咸鱼卡券售卖和额度展示。
         <br />
-        已上线权益以页面勾选项为准；批量下载、去水印、优先技术支持仍需单独开发后再开放。
+        已上线权益以页面勾选项为准；线上支付入口会在虎皮椒正式接入后开放。
         {/* 保持二行说明，避免套餐底部视觉过空 */}
         <span className="sr-only">套餐功能说明</span>
       </p>
