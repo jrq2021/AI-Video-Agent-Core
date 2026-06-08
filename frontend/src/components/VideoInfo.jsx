@@ -330,10 +330,10 @@ export default function VideoInfo({
                 </span>
                 {isFreeUser && (
                   <button
-                    onClick={() => openUpgrade?.("升级 Pro 解锁每日 30 次下载")}
+                    onClick={() => openUpgrade?.("兑换会员码解锁每日 30 次下载")}
                     className="text-xs text-primary-600 hover:text-primary-700 font-medium underline"
                   >
-                    升级
+                    兑换码
                   </button>
                 )}
               </div>

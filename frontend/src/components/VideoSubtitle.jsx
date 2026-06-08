@@ -689,11 +689,11 @@ export default function VideoSubtitle({
                         {isFreeUser && summarizeRemaining <= 0 && (
                           <button
                             onClick={() =>
-                              openUpgrade?.("升级 Pro 每日 10 次 AI 总结")
+                              openUpgrade?.("兑换会员码解锁每日 10 次 AI 总结")
                             }
                             className="text-xs text-primary-600 hover:text-primary-700 font-medium underline"
                           >
-                            升级
+                            兑换码
                           </button>
                         )}
                       </div>
@@ -824,10 +824,10 @@ export default function VideoSubtitle({
                           </span>
                         </div>
                         <p className="text-dark-500 text-sm mb-1">
-                          思维导图功能需升级会员
+                          思维导图功能需会员码解锁
                         </p>
                         <p className="text-dark-400 text-xs mb-4">
-                          升级 Pro 或 Ultra 后即可将视频内容可视化为思维导图
+                          兑换 Pro 或 Ultra 会员码后即可将视频内容可视化为思维导图
                         </p>
                         <button
                           onClick={() =>
@@ -835,7 +835,7 @@ export default function VideoSubtitle({
                           }
                           className="px-5 py-2 bg-gradient-to-r from-purple-600 to-purple-500 text-white rounded-xl font-medium text-sm hover:from-purple-700 hover:to-purple-600 active:scale-95 transition-all shadow-md shadow-purple-500/20"
                         >
-                          🔓 升级解锁
+                          🔓 兑换解锁
                         </button>
                       </>
                     ) : (

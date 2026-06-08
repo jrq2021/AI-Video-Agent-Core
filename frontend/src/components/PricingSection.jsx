@@ -11,8 +11,8 @@ import { useRef, useState } from "react";
  *
  * Props:
  * @param {object} currentUser - 当前登录用户（含 plan 字段）
- * @param {function} onUpgrade - 点击升级按钮的回调 (plan, orderType) => void
- * @param {boolean} isLoading - 是否正在处理支付
+ * @param {function} onUpgrade - 点击免费套餐按钮的回调
+ * @param {boolean} isLoading - 是否正在处理操作
  */
 
 // 套餐数据（与后端 PLAN_CONFIG 保持一致）
@@ -405,7 +405,7 @@ export default function PricingSection({
       <p className="text-center text-sm text-dark-400 mt-10">
         当前会员通过兑换码开通；价格用于咸鱼卡券售卖和额度展示。
         <br />
-        已上线权益以页面勾选项为准；线上支付入口会在虎皮椒正式接入后开放。
+        已上线权益以页面勾选项为准；购买后使用卖家发放的会员码兑换。
         {/* 保持二行说明，避免套餐底部视觉过空 */}
         <span className="sr-only">套餐功能说明</span>
       </p>

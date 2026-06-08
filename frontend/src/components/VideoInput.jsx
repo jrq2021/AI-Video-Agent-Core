@@ -10,6 +10,7 @@ import { useState } from "react";
  * @param {boolean} isLoading - 是否正在解析
  * @param {object} user - 当前用户（null 表示未登录）
  * @param {function} onAuthClick - 点击登录按钮回调
+ * @param {function} onUpgradeClick - 点击会员解锁按钮回调
  */
 
 export default function VideoInput({
@@ -19,6 +20,7 @@ export default function VideoInput({
   isLoading,
   user,
   onAuthClick,
+  onUpgradeClick,
 }) {
   const [url, setUrl] = useState("");
   const [quotaError, setQuotaError] = useState("");
@@ -159,10 +161,12 @@ export default function VideoInput({
               ) : (
                 <button
                   type="button"
-                  onClick={onAuthClick}
+                  onClick={() =>
+                    onUpgradeClick?.("会员额度已用完，请兑换会员码解锁更多额度")
+                  }
                   className="text-xs px-3 py-1.5 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 transition-colors"
                 >
-                  升级套餐
+                  兑换会员码
                 </button>
               )}
             </div>

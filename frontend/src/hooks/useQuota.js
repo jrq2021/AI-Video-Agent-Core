@@ -124,7 +124,7 @@ export default function useQuota(user) {
                         const reason = `游客今日下载次数已用完（${q.daily_downloads_used}/${q.daily_downloads_limit}），登录后免费用户每日可下载 3 次`;
                         return { allowed: false, reason, needLogin: true, needUpgrade: false };
                     }
-                    const reason = `今日下载额度已用完（${q.daily_downloads_used}/${q.daily_downloads_limit}），升级会员获取更多额度`;
+                    const reason = `今日下载额度已用完（${q.daily_downloads_used}/${q.daily_downloads_limit}），兑换会员码获取更多额度`;
                     return { allowed: false, reason, needLogin: false, needUpgrade: true };
                 }
             } else if (action === "summarize" || action === "mindmap") {
@@ -134,14 +134,14 @@ export default function useQuota(user) {
                         const reason = `游客今日 AI 总结次数已用完，登录后免费用户每日可总结 1 次`;
                         return { allowed: false, reason, needLogin: true, needUpgrade: false };
                     }
-                    const reason = `今日 AI 总结额度已用完（${q.daily_summaries_used}/${q.daily_summaries_limit}），升级会员获取更多额度`;
+                    const reason = `今日 AI 总结额度已用完（${q.daily_summaries_used}/${q.daily_summaries_limit}），兑换会员码获取更多额度`;
                     return { allowed: false, reason, needLogin: false, needUpgrade: true };
                 }
                 // 额外检查：免费/游客用户不能导出思维导图
                 if (action === "mindmap" && !q.can_export_mindmap) {
                     const reason = isGuest
-                        ? "思维导图导出需要登录并升级到 Pro/Ultra 会员"
-                        : "思维导图导出是 Pro/Ultra 会员专属功能，请升级后使用";
+                        ? "思维导图导出需要登录并兑换 Pro/Ultra 会员码"
+                        : "思维导图导出是 Pro/Ultra 会员专属功能，请兑换会员码后使用";
                     return { allowed: false, reason, needLogin: isGuest, needUpgrade: !isGuest };
                 }
             }
@@ -161,7 +161,7 @@ export default function useQuota(user) {
     /**
      * 手动打开升级弹窗
      */
-    const openUpgrade = useCallback((reason = "升级会员解锁更多功能") => {
+    const openUpgrade = useCallback((reason = "兑换会员码解锁更多功能") => {
         setUpgradeReason(reason);
         setShowUpgrade(true);
     }, []);
@@ -200,80 +200,23 @@ export default function useQuota(user) {
                     return;
                 }
 
-                if (!token) {
-                    const record = recordMembershipClick({
-                        plan,
-                        orderType,
-                        status: "login_required",
-                    });
-                    setOrderDialog({
-                        type: "login_required",
-                        title: "需要先登录",
-                        message: "这次套餐点击已记录。登录后才能创建订单并获得对应额度。",
-                        plan,
-                        orderType,
-                        record,
-                    });
-                    return;
-                }
-
-                const pendingRecord = recordMembershipClick({
+                const couponOnlyRecord = recordMembershipClick({
                     plan,
                     orderType,
-                    status: "creating_order",
+                    status: "coupon_only",
                 });
-
-                const res = await fetch(`${API_BASE}/api/membership/create-order`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${token}`,
-                    },
-                    body: JSON.stringify({ plan, order_type: orderType }),
+                setOrderDialog({
+                    type: "coupon_only",
+                    title: "请使用会员兑换码",
+                    message: token
+                        ? "当前仅支持咸鱼卡券解锁。请在会员价格区输入你收到的兑换码。"
+                        : "当前仅支持咸鱼卡券解锁。请先登录账号，再在会员价格区输入兑换码。",
+                    plan,
+                    orderType,
+                    record: couponOnlyRecord,
                 });
-                const data = await res.json();
-                if (data.success) {
-                    const record = recordMembershipClick({
-                        plan,
-                        orderType,
-                        status: data.checkout_url ? "redirecting_to_payment" : "order_created",
-                        orderId: data.order_id,
-                        amount: data.amount,
-                        paymentGateway: data.payment_gateway,
-                    });
-                    if (data.checkout_url) {
-                        setShowUpgrade(false);
-                        window.location.href = data.checkout_url;
-                        return;
-                    }
-                    setOrderDialog({
-                        type: "order_created",
-                        title: "订单已创建",
-                        message: "订单已创建，但支付网关没有返回跳转地址。请稍后重试或联系管理员检查支付配置。",
-                        plan,
-                        orderType,
-                        orderId: data.order_id,
-                        amount: data.amount,
-                        record,
-                    });
-                    setShowUpgrade(false);
-                } else {
-                    const record = recordMembershipClick({
-                        plan,
-                        orderType,
-                        status: "order_failed",
-                        error: data.detail || "未知错误",
-                        pendingRecordId: pendingRecord?.id,
-                    });
-                    setOrderDialog({
-                        type: "error",
-                        title: "创建订单失败",
-                        message: data.detail || "未知错误",
-                        plan,
-                        orderType,
-                        record,
-                    });
-                }
+                setShowUpgrade(false);
+                return;
             } catch (e) {
                 const record = recordMembershipClick({
                     plan,

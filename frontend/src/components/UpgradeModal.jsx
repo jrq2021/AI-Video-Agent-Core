@@ -1,20 +1,19 @@
 /**
- * UpgradeModal — 付费墙拦截弹窗
+ * UpgradeModal — 会员码解锁引导弹窗
  *
- * 当用户额度用尽或尝试使用高级功能时弹出，引导升级。
+ * 当用户额度用尽或尝试使用高级功能时弹出，引导兑换会员码。
  * 设计要点：
  * - 毛玻璃背景 + 居中卡片，视觉聚焦
  * - 展示当前套餐 vs 推荐套餐对比
- * - 快捷升级按钮 + 稍后再说
+ * - 会员码兑换入口 + 稍后再说
  * - 支持键盘 ESC 关闭
  *
  * Props:
  * @param {boolean} show - 是否显示
- * @param {string} reason - 升级引导文案
+ * @param {string} reason - 会员码解锁引导文案
  * @param {object} currentUser - 当前用户
  * @param {function} onUpgrade - 升级回调 (plan, orderType) => void
  * @param {function} onClose - 关闭回调
- * @param {boolean} isLoading - 支付加载态
  */
 
 export default function UpgradeModal({
@@ -49,7 +48,7 @@ export default function UpgradeModal({
       onKeyDown={handleKeyDown}
       role="dialog"
       aria-modal="true"
-      aria-label="升级会员"
+      aria-label="兑换会员码"
     >
       {/* 毛玻璃背景 */}
       <div
