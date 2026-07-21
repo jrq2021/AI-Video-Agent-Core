@@ -7,7 +7,7 @@ import time
 from email.message import EmailMessage
 from typing import Optional
 
-from auth import EMAIL_RE, _get_db, get_user_by_email, update_user_password
+from auth import EMAIL_RE, _get_db, get_user_by_email, update_user_password, validate_password
 from runtime_config import get_runtime_settings
 
 
@@ -228,5 +228,6 @@ def require_email_code(email: str, purpose: str, code: str) -> bool:
 
 def reset_password_with_email_code(email: str, code: str, password: str) -> dict:
     normalized_email = _normalize_email(email)
+    validate_password(password)
     require_email_code(normalized_email, "reset_password", code)
     return update_user_password(normalized_email, password)

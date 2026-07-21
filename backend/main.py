@@ -22,7 +22,17 @@ from downloader import VideoDownloader
 from douyin import DouyinParser, is_douyin_url
 from bilibili import BilibiliParser, is_bilibili_url
 from summarizer import summarize_video, parse_video, summarize_text, generate_mindmap, extract_subtitles_segments
-from auth import create_user, authenticate_user, create_token, get_current_user, get_optional_user, get_user_by_id, init_db
+from auth import (
+    create_user,
+    authenticate_user,
+    create_token,
+    ensure_registration_available,
+    get_current_user,
+    get_optional_user,
+    get_user_by_id,
+    init_db,
+    validate_registration_input,
+)
 from email_verification import (
     init_email_verification_db,
     issue_email_code,
@@ -183,8 +193,10 @@ async def health():
 async def register(req: RegisterRequest):
     """注册新用户"""
     try:
+        username, email = validate_registration_input(req.username, req.email, req.password)
+        ensure_registration_available(username, email)
         require_email_code(req.email, "register", req.code)
-        user = create_user(req.username, req.email, req.password)
+        user = create_user(username, email, req.password)
         token = create_token(user["id"])
         return {"success": True, "user": user, "token": token}
     except ValueError as e:

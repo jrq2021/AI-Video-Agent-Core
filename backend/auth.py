@@ -117,18 +117,36 @@ def _verify_password(password: str, stored: str) -> tuple[bool, bool]:
 EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 
-def create_user(username: str, email: str, password: str) -> dict:
-    """注册新用户，返回用户信息"""
-    username = username.strip()
-    email = email.strip().lower()
-
+def validate_password(password: str) -> str:
     if len(password) < PASSWORD_MIN_LENGTH:
         raise ValueError("密码至少 8 位")
+    return password
 
-    if len(username) < 2 or len(username) > 30:
-        raise ValueError("用户名需 2-30 个字符")
-    if not EMAIL_RE.match(email):
+
+def validate_registration_input(username: str, email: str, password: str) -> tuple[str, str]:
+    normalized_username = username.strip()
+    normalized_email = email.strip().lower()
+    validate_password(password)
+    if len(normalized_username) < 2 or len(normalized_username) > 30:
+        raise ValueError("用户名需为 2-30 个字符")
+    if not EMAIL_RE.match(normalized_email):
         raise ValueError("邮箱格式不正确")
+    return normalized_username, normalized_email
+
+
+def ensure_registration_available(username: str, email: str) -> None:
+    with _get_db() as conn:
+        existing = conn.execute(
+            "SELECT 1 FROM users WHERE username=? OR email=?",
+            (username, email),
+        ).fetchone()
+    if existing:
+        raise ValueError("用户名或邮箱已被注册")
+
+
+def create_user(username: str, email: str, password: str) -> dict:
+    """注册新用户，返回用户信息"""
+    username, email = validate_registration_input(username, email, password)
     user_id = str(uuid.uuid4())
     now = int(time.time())
     pw_hash = _hash_password(password)
@@ -190,8 +208,7 @@ def get_user_by_email(email: str) -> Optional[dict]:
 
 def update_user_password(email: str, password: str) -> dict:
     email = email.strip().lower()
-    if len(password) < PASSWORD_MIN_LENGTH:
-        raise ValueError("密码至少 8 位")
+    validate_password(password)
     user = get_user_by_email(email)
     if not user:
         raise ValueError("邮箱未注册")

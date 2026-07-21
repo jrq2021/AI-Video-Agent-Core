@@ -9,6 +9,9 @@ const initialForm = {
   code: "",
 };
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_CODE_PATTERN = /^\d{6}$/;
+
 const modeMeta = {
   login: {
     title: "登录",
@@ -91,8 +94,8 @@ export default function AuthModal({ isOpen, onClose, onLogin }) {
     if (!current.purpose || sendingCode || cooldown > 0) return;
 
     const email = form.email.trim();
-    if (!email) {
-      setError("请先填写邮箱");
+    if (!EMAIL_PATTERN.test(email)) {
+      setError("请输入正确的邮箱地址");
       return;
     }
 
@@ -127,8 +130,43 @@ export default function AuthModal({ isOpen, onClose, onLogin }) {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (loading) return;
+
     setError("");
     setNotice("");
+
+    const username = form.username.trim();
+    const email = form.email.trim();
+    const code = form.code.trim();
+
+    if (mode === "login") {
+      if (!form.login.trim()) {
+        setError("请输入用户名或邮箱");
+        return;
+      }
+      if (!form.password) {
+        setError("请输入密码");
+        return;
+      }
+    } else {
+      if (mode === "register" && (username.length < 2 || username.length > 30)) {
+        setError("用户名需为 2-30 个字符");
+        return;
+      }
+      if (!EMAIL_PATTERN.test(email)) {
+        setError("请输入正确的邮箱地址");
+        return;
+      }
+      if (!EMAIL_CODE_PATTERN.test(code)) {
+        setError("请输入 6 位数字验证码");
+        return;
+      }
+      if (form.password.length < 8) {
+        setError("密码至少需要 8 位");
+        return;
+      }
+    }
+
     setLoading(true);
 
     try {
@@ -138,17 +176,17 @@ export default function AuthModal({ isOpen, onClose, onLogin }) {
       if (mode === "register") {
         endpoint = "/api/auth/register";
         body = {
-          username: form.username,
-          email: form.email,
+          username,
+          email,
           password: form.password,
-          code: form.code,
+          code,
         };
       } else if (mode === "reset") {
         endpoint = "/api/auth/reset-password";
         body = {
-          email: form.email,
+          email,
           password: form.password,
-          code: form.code,
+          code,
         };
       }
 
@@ -230,7 +268,7 @@ export default function AuthModal({ isOpen, onClose, onLogin }) {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="auth-modal__form" autoComplete="off">
+        <form onSubmit={handleSubmit} className="auth-modal__form" autoComplete="off" noValidate>
           <input
             className="auth-modal__autofill-trap"
             type="text"
@@ -318,7 +356,9 @@ export default function AuthModal({ isOpen, onClose, onLogin }) {
                     placeholder="6 位验证码"
                     autoComplete="one-time-code"
                     required
-                    minLength={4}
+                    minLength={6}
+                    maxLength={6}
+                    pattern="[0-9]{6}"
                   />
                 </span>
                 <button
@@ -346,10 +386,10 @@ export default function AuthModal({ isOpen, onClose, onLogin }) {
                 name={mode === "login" ? "login_secret" : "new_secret"}
                 value={form.password}
                 onChange={handleChange("password")}
-                placeholder="至少 6 位"
+                placeholder={mode === "login" ? "请输入密码" : "至少 8 位"}
                 autoComplete="off"
                 required
-                minLength={6}
+                minLength={mode === "login" ? 1 : 8}
               />
             </span>
           </label>
