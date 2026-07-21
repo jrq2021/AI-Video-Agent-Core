@@ -1,9 +1,6 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import Navbar from "./components/Navbar";
 import HeroSection from "./components/HeroSection";
-import VideoInput from "./components/VideoInput";
-import VideoInfo from "./components/VideoInfo";
-import VideoSubtitle from "./components/VideoSubtitle";
 import FeaturesSection from "./components/FeaturesSection";
 import PricingSection from "./components/PricingSection";
 import FAQSection from "./components/FAQSection";
@@ -19,11 +16,17 @@ import Footer from "./components/Footer";
 import AuthModal from "./components/AuthModal";
 import ScrollExperience from "./components/ScrollExperience";
 import ProfilePage from "./components/ProfilePage";
+import ParsePage from "./components/ParsePage";
 import useQuota from "./hooks/useQuota";
+import {
+  getPageFromPath,
+  getPathForPage,
+  isHomeSection,
+} from "./services/appNavigation";
 
 export default function App() {
   const [page, setPage] = useState(() =>
-    window.location.pathname === "/profile" ? "profile" : "home",
+    getPageFromPath(window.location.pathname),
   );
   const [videoData, setVideoData] = useState(null);
   const [activeHistoryRecord, setActiveHistoryRecord] = useState(null);
@@ -31,6 +34,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
   const [user, setUser] = useState(null);
+  const homeScrollRef = useRef(null);
 
   const {
     quota,
@@ -55,7 +59,7 @@ export default function App() {
 
   useEffect(() => {
     const handlePopState = () => {
-      setPage(window.location.pathname === "/profile" ? "profile" : "home");
+      setPage(getPageFromPath(window.location.pathname));
       window.scrollTo({ top: 0, behavior: "auto" });
     };
 
@@ -64,6 +68,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (page === "parse") {
+      document.title = "视频解析工作台 - 万能视频下载";
+      return;
+    }
     document.title =
       page === "profile"
         ? "个人中心 - 万能视频下载"
@@ -107,13 +115,36 @@ export default function App() {
     setUser(null);
   };
 
-  const navigateTo = useCallback((nextPage, { replace = false } = {}) => {
-    const path = nextPage === "profile" ? "/profile" : "/";
-    const method = replace ? "replaceState" : "pushState";
-    window.history[method]({}, "", path);
-    setPage(nextPage);
-    window.scrollTo({ top: 0, behavior: "auto" });
+  const scrollHomeTo = useCallback((sectionId = "home", behavior = "auto") => {
+    const scroller = homeScrollRef.current;
+    const target = document.getElementById(sectionId);
+    if (!scroller || !target) return;
+
+    const top =
+      target.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop;
+    scroller.scrollTo({ top, behavior });
   }, []);
+
+  const navigateTo = useCallback((nextPage, { replace = false, sectionId } = {}) => {
+    const path = getPathForPage(nextPage);
+    const method = replace ? "replaceState" : "pushState";
+    if (window.location.pathname !== path) {
+      window.history[method]({}, "", path);
+    }
+    setPage(nextPage);
+    window.requestAnimationFrame(() => {
+      if (nextPage === "home") {
+        scrollHomeTo(
+          isHomeSection(sectionId) ? sectionId : "home",
+          sectionId ? "smooth" : "auto",
+        );
+      } else {
+        window.scrollTo({ top: 0, behavior: "auto" });
+      }
+    });
+  }, [scrollHomeTo]);
 
   const handleAnalyze = useCallback(async (url, resumeRecord = null) => {
     setIsLoading(true);
@@ -180,14 +211,10 @@ export default function App() {
     (item) => {
       if (!item.webpage_url) return;
 
-      navigateTo("home");
-      window.setTimeout(() => {
-        document.getElementById("download-workspace")?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
+      navigateTo("parse");
+      window.requestAnimationFrame(() => {
         handleAnalyze(item.webpage_url, item);
-      }, 80);
+      });
     },
     [handleAnalyze, navigateTo],
   );
@@ -199,6 +226,13 @@ export default function App() {
       await updateParseArtifacts(recordKey, artifacts, user);
     },
     [activeHistoryRecord, user],
+  );
+
+  const handleNavigate = useCallback(
+    ({ page: nextPage, sectionId } = {}) => {
+      navigateTo(nextPage || "home", { sectionId });
+    },
+    [navigateTo],
   );
 
   if (page === "profile") {
@@ -221,92 +255,82 @@ export default function App() {
     );
   }
 
-  return (
-    <div className="site-shell min-h-screen">
-      <ScrollExperience />
-      <div id="home" className="cinematic-hero">
+  if (page === "parse") {
+    return (
+      <div className="site-shell min-h-screen">
         <Navbar
           user={user}
           quota={quota}
+          activePage={page}
+          onNavigate={handleNavigate}
           onAuthClick={() => setAuthOpen(true)}
           onLogout={handleLogout}
           onOpenProfile={() => navigateTo("profile")}
         />
-        <HeroSection />
+        <AuthModal
+          isOpen={authOpen}
+          onClose={() => setAuthOpen(false)}
+          onLogin={handleLogin}
+        />
+        <ParsePage
+          onAnalyze={handleAnalyze}
+          checkQuota={checkQuota}
+          quota={quota}
+          isLoading={isLoading}
+          user={user}
+          onAuthClick={() => setAuthOpen(true)}
+          openUpgrade={openUpgrade}
+          error={error}
+          videoData={videoData}
+          consumeQuota={consumeQuota}
+          onDownloadComplete={handleDownloadComplete}
+          activeHistoryRecord={activeHistoryRecord}
+          onArtifactsChange={handleArtifactsChange}
+        />
+        <Footer />
+        <UpgradeModal
+          show={showUpgrade && !!user}
+          reason={upgradeReason}
+          currentUser={membershipUser}
+          onClose={closeUpgrade}
+        />
+        <AuthModal
+          isOpen={showUpgrade && !user}
+          onClose={closeUpgrade}
+          onLogin={(userData, token) => {
+            handleLogin(userData, token);
+            closeUpgrade();
+          }}
+        />
+        <MembershipOrderModal data={orderDialog} onClose={closeOrderDialog} />
       </div>
+    );
+  }
 
+  return (
+    <div className="site-shell min-h-screen">
       <AuthModal
         isOpen={authOpen}
         onClose={() => setAuthOpen(false)}
         onLogin={handleLogin}
       />
+      <div ref={homeScrollRef} className="home-scroll">
+        <ScrollExperience scrollerRef={homeScrollRef} />
+      <div id="home" className="cinematic-hero">
+        <Navbar
+          user={user}
+          quota={quota}
+          activePage={page}
+          onNavigate={handleNavigate}
+          onAuthClick={() => setAuthOpen(true)}
+          onLogout={handleLogout}
+          onOpenProfile={() => navigateTo("profile")}
+        />
+        <HeroSection onStartParse={() => navigateTo("parse")} />
+      </div>
 
       <main className="cinematic-content" aria-label="主要内容">
-        <section id="download-workspace" className="workspace-stage">
-          <div className="mx-auto max-w-5xl px-4 py-24 sm:px-6 md:py-32">
-            <header className="section-heading mb-12 text-center">
-              <h2 className="workspace-title">带来链接，留住此刻。</h2>
-              <p className="mx-auto mt-5 max-w-2xl text-sm leading-7 text-dark-500 sm:text-base">
-                粘贴任意支持平台的视频链接，解析高清画质、音频与字幕，把灵感安静地保存下来。
-              </p>
-            </header>
-
-            <VideoInput
-              onAnalyze={handleAnalyze}
-              onCheckQuota={checkQuota}
-              quota={quota}
-              isLoading={isLoading}
-              user={user}
-              onAuthClick={() => setAuthOpen(true)}
-              onUpgradeClick={openUpgrade}
-            />
-
-            {error ? (
-              <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-600">
-                {error}
-              </div>
-            ) : null}
-
-            {isLoading ? (
-              <div className="mt-8 text-center">
-                <div className="inline-block size-8 animate-spin rounded-full border-2 border-primary-200 border-t-primary-600" />
-                <p className="mt-3 text-sm text-dark-400">正在解析视频信息...</p>
-              </div>
-            ) : null}
-
-            {videoData ? (
-              <div className="mt-8 grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(360px,460px)_minmax(0,1fr)] lg:gap-7">
-                <div className="min-w-0">
-                  <VideoInfo
-                    data={videoData}
-                    user={user}
-                    quota={quota}
-                    checkQuota={checkQuota}
-                    consumeQuota={consumeQuota}
-                    openUpgrade={openUpgrade}
-                    onDownloadComplete={handleDownloadComplete}
-                  />
-                </div>
-                <div className="min-w-0">
-                  <VideoSubtitle
-                    videoSrc={null}
-                    originalUrl={videoData.webpage_url}
-                    user={user}
-                    quota={quota}
-                    checkQuota={checkQuota}
-                    consumeQuota={consumeQuota}
-                    openUpgrade={openUpgrade}
-                    initialArtifacts={activeHistoryRecord}
-                    onArtifactsChange={handleArtifactsChange}
-                  />
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-        </section>
-
-        <FeaturesSection />
+        <FeaturesSection onStartParse={() => navigateTo("parse")} />
         <PricingSection
           currentUser={membershipUser}
           onUpgrade={handleUpgrade}
@@ -319,6 +343,7 @@ export default function App() {
       </main>
 
       <Footer />
+      </div>
 
       <UpgradeModal
         show={showUpgrade && !!user}

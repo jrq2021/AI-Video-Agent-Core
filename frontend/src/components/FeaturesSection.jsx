@@ -96,7 +96,7 @@ function getCharacterStyle(offset, isMobile, isAnimating) {
   };
 }
 
-export default function FeaturesSection() {
+export default function FeaturesSection({ onStartParse }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640);
@@ -206,14 +206,11 @@ export default function FeaturesSection() {
         </div>
 
         <a
-          href="#download-workspace"
+          href="/parse"
           className="feature-showcase__link"
           onClick={(event) => {
             event.preventDefault();
-            document.querySelector("#download-workspace")?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
+            onStartParse?.();
           }}
         >
           开始解析

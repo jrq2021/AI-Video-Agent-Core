@@ -36,18 +36,16 @@
   }
 }
 
-#home,
-#download-workspace,
-#features,
-#pricing,
-#faq,
-#contact,
-.cinematic-footer {
+.home-scroll > #home,
+.home-scroll #features,
+.home-scroll #pricing,
+.home-scroll #faq,
+.home-scroll #contact,
+.home-scroll .cinematic-footer {
   scroll-snap-align: start;
   scroll-snap-stop: normal;
 }
 
-#download-workspace,
 #pricing,
 #faq,
 #contact {
@@ -369,6 +367,27 @@
   overflow-x: clip;
   isolation: isolate;
   background: #031923;
+}
+
+.home-scroll {
+  height: 100dvh;
+  overflow-x: clip;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scroll-behavior: smooth;
+  scroll-snap-type: y mandatory;
+  scrollbar-gutter: stable;
+}
+
+.parse-page {
+  min-height: 100dvh;
+  padding-top: clamp(5.5rem, 10vw, 8rem);
+}
+
+@media (max-width: 768px) {
+  .home-scroll {
+    scroll-snap-type: y proximity;
+  }
 }
 
 .site-shell::before {
@@ -1436,7 +1455,6 @@
 }
 
 @supports (content-visibility: auto) {
-  #download-workspace,
   #features,
   #pricing,
   #faq,
@@ -3483,6 +3501,11 @@
 
 @media (prefers-reduced-motion: reduce) {
   html {
+    scroll-behavior: auto;
+    scroll-snap-type: none;
+  }
+
+  .home-scroll {
     scroll-behavior: auto;
     scroll-snap-type: none;
   }

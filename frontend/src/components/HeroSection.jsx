@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-export default function HeroSection() {
+export default function HeroSection({ onStartParse }) {
   const sectionRef = useRef(null);
   const videoRef = useRef(null);
   const [videoReady, setVideoReady] = useState(false);
@@ -73,7 +73,11 @@ export default function HeroSection() {
         </p>
 
         <a
-          href="#download-workspace"
+          href="/parse"
+          onClick={(event) => {
+            event.preventDefault();
+            onStartParse?.();
+          }}
           className="liquid-glass animate-fade-rise-delay-2 mt-12 inline-flex cursor-pointer items-center justify-center rounded-full px-14 py-5 text-base font-medium text-white transition-transform duration-300 hover:scale-[1.03] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
         >
           开始解析

@@ -10,11 +10,20 @@ import { APP_VERSION, VERSION_CHANGELOG, VERSION_RELEASE_DATE } from "../version
 
 const navItems = [
   { label: "首页", href: "#home" },
-  { label: "解析工作台", href: "#download-workspace" },
+  { label: "解析工作台", href: "/parse" },
   { label: "功能特色", href: "#features" },
   { label: "常见问题", href: "#faq" },
   { label: "联系我们", href: "#contact" },
 ];
+
+const navigationTargets = {
+  "#home": { page: "home", sectionId: "home" },
+  "/parse": { page: "parse" },
+  "#features": { page: "home", sectionId: "features" },
+  "#pricing": { page: "home", sectionId: "pricing" },
+  "#faq": { page: "home", sectionId: "faq" },
+  "#contact": { page: "home", sectionId: "contact" },
+};
 
 const planLabels = {
   free: "免费版",
@@ -25,6 +34,8 @@ const planLabels = {
 export default function Navbar({
   user,
   quota,
+  activePage,
+  onNavigate,
   onAuthClick,
   onLogout,
   onOpenProfile,
@@ -86,6 +97,11 @@ export default function Navbar({
     event.preventDefault();
     setMobileOpen(false);
     setAccountOpen(false);
+    const target = navigationTargets[href];
+    if (target && onNavigate) {
+      onNavigate(target);
+      return;
+    }
     document.querySelector(href)?.scrollIntoView({
       behavior: "smooth",
       block: "start",
@@ -146,13 +162,15 @@ export default function Navbar({
         </div>
 
         <nav className="hidden items-center gap-8 md:flex" aria-label="主导航">
-          {navItems.map((item, index) => (
+          {navItems.map((item) => (
             <a
               key={item.label}
               href={item.href}
               onClick={(event) => handleNavClick(event, item.href)}
               className={`text-sm transition-colors ${
-                index === 0
+                (activePage === "parse"
+                  ? item.href === "/parse"
+                  : item.href === "#home")
                   ? "text-white"
                   : "text-white/60 hover:text-white"
               }`}
@@ -241,9 +259,9 @@ export default function Navbar({
             </button>
           )}
           <a
-            href="#download-workspace"
+            href="/parse"
             onClick={(event) =>
-              handleNavClick(event, "#download-workspace")
+              handleNavClick(event, "/parse")
             }
             className="liquid-glass rounded-full px-6 py-2.5 text-sm text-white transition-transform duration-300 hover:scale-[1.03]"
           >
@@ -350,9 +368,9 @@ export default function Navbar({
               </button>
             ) : null}
             <a
-              href="#download-workspace"
+              href="/parse"
               onClick={(event) =>
-                handleNavClick(event, "#download-workspace")
+                handleNavClick(event, "/parse")
               }
               className="liquid-glass rounded-full px-5 py-3 text-center text-sm text-white"
             >
