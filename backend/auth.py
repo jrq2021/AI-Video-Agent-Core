@@ -129,9 +129,6 @@ def create_user(username: str, email: str, password: str) -> dict:
         raise ValueError("用户名需 2-30 个字符")
     if not EMAIL_RE.match(email):
         raise ValueError("邮箱格式不正确")
-    if len(password) < 6:
-        raise ValueError("密码至少 6 位")
-
     user_id = str(uuid.uuid4())
     now = int(time.time())
     pw_hash = _hash_password(password)
@@ -195,9 +192,6 @@ def update_user_password(email: str, password: str) -> dict:
     email = email.strip().lower()
     if len(password) < PASSWORD_MIN_LENGTH:
         raise ValueError("密码至少 8 位")
-    if len(password) < 6:
-        raise ValueError("密码至少 6 位")
-
     user = get_user_by_email(email)
     if not user:
         raise ValueError("邮箱未注册")
