@@ -5,6 +5,7 @@
 import os
 import json
 import asyncio
+import time
 import uuid
 import queue as std_queue
 import urllib.request
@@ -45,6 +46,11 @@ from hupijiao import (
     verify_hash as verify_hupijiao_hash,
 )
 from runtime_config import get_runtime_settings, validate_runtime_settings
+from auth_rate_limit import (
+    init_auth_rate_limit_db,
+    is_rate_limited,
+    record_rate_limit_event,
+)
 
 
 async def batch_worker_loop(stop_event: asyncio.Event) -> None:
@@ -67,6 +73,7 @@ async def lifespan(app: FastAPI):
     # 启动时初始化数据库
     validate_runtime_settings()
     init_db()
+    init_auth_rate_limit_db()
     init_email_verification_db()
     init_membership_db()
     init_parse_history_db()
@@ -189,6 +196,17 @@ async def send_auth_email_code(req: SendEmailCodeRequest, request: Request):
     """发送注册 / 找回密码邮箱验证码。登录仍使用密码，不需要验证码。"""
     ip = request.client.host if request.client else "127.0.0.1"
     try:
+        settings = get_runtime_settings()
+        now = int(time.time())
+        if is_rate_limited(
+            "send_code",
+            ip,
+            settings.email_code_ip_max_requests,
+            settings.rate_limit_window_seconds,
+            now,
+        ):
+            raise HTTPException(status_code=429, detail="验证码请求过于频繁，请稍后再试")
+        record_rate_limit_event("send_code", ip, now)
         result = issue_email_code(req.email, req.purpose, ip_address=ip)
         response = {
             "success": True,
@@ -206,10 +224,22 @@ async def send_auth_email_code(req: SendEmailCodeRequest, request: Request):
 
 
 @app.post("/api/auth/login")
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request):
     """用户登录"""
+    ip = request.client.host if request.client else "127.0.0.1"
+    settings = get_runtime_settings()
+    now = int(time.time())
+    if is_rate_limited(
+        "login_failure",
+        ip,
+        settings.login_ip_max_failures,
+        settings.rate_limit_window_seconds,
+        now,
+    ):
+        raise HTTPException(status_code=429, detail="登录失败次数过多，请稍后再试")
     user = authenticate_user(req.login, req.password)
     if not user:
+        record_rate_limit_event("login_failure", ip, now)
         raise HTTPException(status_code=401, detail="用户名/邮箱或密码错误")
     token = create_token(user["id"])
     return {"success": True, "user": user, "token": token}
