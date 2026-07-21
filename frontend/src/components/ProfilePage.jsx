@@ -28,6 +28,7 @@ export default function ProfilePage({
   onAuthClick,
   onLogout,
   onContinueHistory,
+  onNavigate,
 }) {
   const plan = quota?.plan && quota.plan !== "guest"
     ? quota.plan
@@ -42,6 +43,17 @@ export default function ProfilePage({
     quota?.daily_summaries_limit,
     quota?.daily_summaries_used,
   );
+  const batchRemaining = getRemaining(
+    quota?.daily_batch_items_limit,
+    quota?.daily_batch_items_used,
+  );
+  const creatorRemaining = getRemaining(
+    quota?.daily_creator_credits_limit,
+    quota?.daily_creator_credits_used,
+  );
+  const expiryText = quota?.expires_at
+    ? new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric" }).format(new Date(quota.expires_at * 1000))
+    : plan === "ultra" ? "长期有效" : "未开通";
 
   return (
     <div className="profile-page">
@@ -98,6 +110,14 @@ export default function ProfilePage({
                   </span>
                   <strong>{planLabel}</strong>
                 </div>
+                <div className="profile-plan-row">
+                  <span>权益到期</span>
+                  <strong>{expiryText}</strong>
+                </div>
+
+                <button type="button" className="profile-redeem" onClick={() => onNavigate?.({ page: "redeem" })}>
+                  兑换会员码
+                </button>
 
                 <button type="button" className="profile-logout" onClick={onLogout}>
                   <LogOut aria-hidden="true" strokeWidth={1.7} />
@@ -119,6 +139,18 @@ export default function ProfilePage({
                     <span>视频下载</span>
                     <strong>{downloadRemaining}</strong>
                     <small>剩余次数</small>
+                  </article>
+                  <article>
+                    <Sparkles aria-hidden="true" strokeWidth={1.7} />
+                    <span>批量解析</span>
+                    <strong>{batchRemaining}</strong>
+                    <small>今日剩余条数</small>
+                  </article>
+                  <article>
+                    <Sparkles aria-hidden="true" strokeWidth={1.7} />
+                    <span>创作额度</span>
+                    <strong>{creatorRemaining}</strong>
+                    <small>今日剩余次数</small>
                   </article>
                   <article>
                     <Sparkles aria-hidden="true" strokeWidth={1.7} />

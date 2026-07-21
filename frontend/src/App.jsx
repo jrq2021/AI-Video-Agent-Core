@@ -17,6 +17,7 @@ import AuthModal from "./components/AuthModal";
 import ScrollExperience from "./components/ScrollExperience";
 import ProfilePage from "./components/ProfilePage";
 import ParsePage from "./components/ParsePage";
+import RedeemPage from "./components/RedeemPage";
 import useQuota from "./hooks/useQuota";
 import {
   getPageFromPath,
@@ -48,6 +49,7 @@ export default function App() {
     closeOrderDialog,
     handleUpgrade,
     redeemCode,
+    getAuthHeaders,
     isLoading: isUpgrading,
   } = useQuota(user);
 
@@ -171,6 +173,9 @@ export default function App() {
               subtitle_type: resumeRecord.subtitle_type || "",
               summary_text: resumeRecord.summary_text || "",
               mindmap_text: resumeRecord.mindmap_text || "",
+              translated_segments: resumeRecord.translated_segments || [],
+              translation_language: resumeRecord.translation_language || "",
+              creator_pack: resumeRecord.creator_pack || {},
             }
           : {};
         const record = await saveParseRecord(data.data, cachedArtifacts, user);
@@ -209,11 +214,12 @@ export default function App() {
 
   const handleContinueHistory = useCallback(
     (item) => {
-      if (!item.webpage_url) return;
+      const sourceUrl = item.webpage_url || item.url;
+      if (!sourceUrl) return;
 
       navigateTo("parse");
       window.requestAnimationFrame(() => {
-        handleAnalyze(item.webpage_url, item);
+        handleAnalyze(sourceUrl, item);
       });
     },
     [handleAnalyze, navigateTo],
@@ -223,9 +229,25 @@ export default function App() {
     async (artifacts) => {
       const recordKey = activeHistoryRecord?.record_key;
       if (!recordKey) return;
-      await updateParseArtifacts(recordKey, artifacts, user);
+      const updated = await updateParseArtifacts(recordKey, artifacts, user);
+      if (updated) setActiveHistoryRecord(updated);
     },
     [activeHistoryRecord, user],
+  );
+
+  const handleOpenBatchRecord = useCallback(
+    async (recordKey) => {
+      try {
+        const response = await fetch(`/api/parse-history/${encodeURIComponent(recordKey)}`, {
+          headers: getAuthHeaders(),
+        });
+        const data = await response.json();
+        if (response.ok && data.record) handleContinueHistory(data.record);
+      } catch {
+        setError("无法打开该批量解析记录，请稍后重试。");
+      }
+    },
+    [getAuthHeaders, handleContinueHistory],
   );
 
   const handleNavigate = useCallback(
@@ -245,6 +267,26 @@ export default function App() {
           onAuthClick={() => setAuthOpen(true)}
           onLogout={handleLogout}
           onContinueHistory={handleContinueHistory}
+          onNavigate={handleNavigate}
+        />
+        <AuthModal
+          isOpen={authOpen}
+          onClose={() => setAuthOpen(false)}
+          onLogin={handleLogin}
+        />
+      </div>
+    );
+  }
+
+  if (page === "redeem") {
+    return (
+      <div className="site-shell min-h-screen">
+        <RedeemPage
+          user={user}
+          quota={quota}
+          onRedeemCode={redeemCode}
+          onAuthClick={() => setAuthOpen(true)}
+          onNavigate={handleNavigate}
         />
         <AuthModal
           isOpen={authOpen}
@@ -286,6 +328,22 @@ export default function App() {
           onDownloadComplete={handleDownloadComplete}
           activeHistoryRecord={activeHistoryRecord}
           onArtifactsChange={handleArtifactsChange}
+          batchProps={{
+            user,
+            quota,
+            getAuthHeaders,
+            onOpenRecord: handleOpenBatchRecord,
+            onAuthClick: () => setAuthOpen(true),
+            onUpgrade: openUpgrade,
+          }}
+          creatorProps={{
+            user,
+            quota,
+            getAuthHeaders,
+            onUpgrade: openUpgrade,
+            onAuthClick: () => setAuthOpen(true),
+            consumeQuota,
+          }}
         />
         <Footer />
         <UpgradeModal
@@ -336,6 +394,7 @@ export default function App() {
           onUpgrade={handleUpgrade}
           onRedeemCode={redeemCode}
           onAuthClick={() => setAuthOpen(true)}
+          onNavigate={handleNavigate}
           isLoading={isUpgrading}
         />
         <FAQSection />

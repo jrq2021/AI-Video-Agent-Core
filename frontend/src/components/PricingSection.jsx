@@ -82,6 +82,7 @@ export default function PricingSection({
   onUpgrade,
   onRedeemCode,
   onAuthClick,
+  onNavigate,
   isLoading = false,
 }) {
   const [billingCycle, setBillingCycle] = useState("monthly"); // monthly | yearly
@@ -215,6 +216,9 @@ export default function PricingSection({
                   {redeemStatus.message}
                 </p>
               )}
+              <button type="button" className="pricing-coupon__link" onClick={() => onNavigate?.({ page: "redeem" })}>
+                打开独立兑换中心
+              </button>
             </form>
           </div>
         </div>
@@ -353,7 +357,11 @@ export default function PricingSection({
                       onUpgrade?.(plan.id, "monthly");
                       return;
                     }
-                    handleCouponOnlyPlan(plan);
+                    if (onNavigate) {
+                      onNavigate({ page: "redeem" });
+                    } else {
+                      handleCouponOnlyPlan(plan);
+                    }
                   }
                 }}
                 disabled={isActive || (plan.id === "free" && isLoading)}

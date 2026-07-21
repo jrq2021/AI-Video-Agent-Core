@@ -1,6 +1,8 @@
+import { useState } from "react";
 import VideoInput from "./VideoInput";
 import VideoInfo from "./VideoInfo";
 import VideoSubtitle from "./VideoSubtitle";
+import BatchParsePanel from "./BatchParsePanel";
 
 export default function ParsePage({
   onAnalyze,
@@ -16,7 +18,10 @@ export default function ParsePage({
   onDownloadComplete,
   activeHistoryRecord,
   onArtifactsChange,
+  batchProps,
+  creatorProps,
 }) {
+  const [mode, setMode] = useState("single");
   return (
     <main className="parse-page cinematic-content" aria-label="视频解析工作台">
       <section className="workspace-stage">
@@ -29,15 +34,24 @@ export default function ParsePage({
             </p>
           </header>
 
-          <VideoInput
-            onAnalyze={onAnalyze}
-            onCheckQuota={checkQuota}
-            quota={quota}
-            isLoading={isLoading}
-            user={user}
-            onAuthClick={onAuthClick}
-            onUpgradeClick={openUpgrade}
-          />
+          <div className="workspace-mode-switch" role="tablist" aria-label="解析方式">
+            <button type="button" role="tab" aria-selected={mode === "single"} className={mode === "single" ? "is-active" : ""} onClick={() => setMode("single")}>单条解析</button>
+            <button type="button" role="tab" aria-selected={mode === "batch"} className={mode === "batch" ? "is-active" : ""} onClick={() => setMode("batch")}>批量解析</button>
+          </div>
+
+          {mode === "batch" ? (
+            <BatchParsePanel {...batchProps} />
+          ) : (
+            <VideoInput
+              onAnalyze={onAnalyze}
+              onCheckQuota={checkQuota}
+              quota={quota}
+              isLoading={isLoading}
+              user={user}
+              onAuthClick={onAuthClick}
+              onUpgradeClick={openUpgrade}
+            />
+          )}
 
           {error ? (
             <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-600">
@@ -76,6 +90,7 @@ export default function ParsePage({
                   openUpgrade={openUpgrade}
                   initialArtifacts={activeHistoryRecord}
                   onArtifactsChange={onArtifactsChange}
+                  creatorProps={creatorProps}
                 />
               </div>
             </div>
