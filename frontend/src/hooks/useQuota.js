@@ -31,9 +31,14 @@ const GUEST_DEFAULTS = {
     plan: "guest",
     daily_downloads_limit: 1,
     daily_summaries_limit: 1,
+    daily_batch_items_limit: 0,
+    daily_creator_credits_limit: 0,
     daily_downloads_used: 0,
     daily_summaries_used: 0,
+    daily_batch_items_used: 0,
+    daily_creator_credits_used: 0,
     can_batch_download: false,
+    can_batch_parse: false,
     batch_max_count: 0,
     can_export_mindmap: false,
     max_quality: "源站可用",
@@ -71,12 +76,16 @@ export default function useQuota(user) {
         quotaRef.current = quota;
     }, [quota]);
 
+    const getAuthHeaders = useCallback(() => {
+        const token = localStorage.getItem("auth_token");
+        return token ? { Authorization: `Bearer ${token}` } : {};
+    }, []);
+
     /**
      * 从服务端拉取最新额度（登录用户走会员 API，游客走 my-quota）
      */
     const fetchQuota = useCallback(async () => {
-        const token = localStorage.getItem("auth_token");
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        const headers = getAuthHeaders();
 
         try {
             const res = await fetch(`${API_BASE}/api/membership/my-quota`, { headers });
@@ -89,7 +98,7 @@ export default function useQuota(user) {
             console.warn("[useQuota] 获取额度失败:", e);
         }
         return null;
-    }, []);
+    }, [getAuthHeaders]);
 
     // 用户状态变化时自动拉取额度
     useEffect(() => {
@@ -143,6 +152,30 @@ export default function useQuota(user) {
                         ? "思维导图导出需要登录并兑换 Pro/Ultra 会员码"
                         : "思维导图导出是 Pro/Ultra 会员专属功能，请兑换会员码后使用";
                     return { allowed: false, reason, needLogin: isGuest, needUpgrade: !isGuest };
+                }
+            }
+
+            if (action === "batch_parse") {
+                const remaining = (q.daily_batch_items_limit || 0) - (q.daily_batch_items_used || 0);
+                if (!q.can_batch_parse || remaining <= 0) {
+                    return {
+                        allowed: false,
+                        reason: "Batch parsing is a Pro membership benefit with a daily limit.",
+                        needLogin: isGuest,
+                        needUpgrade: !isGuest,
+                    };
+                }
+            }
+
+            if (action === "translate" || action === "creator_pack") {
+                const remaining = (q.daily_creator_credits_limit || 0) - (q.daily_creator_credits_used || 0);
+                if (remaining <= 0) {
+                    return {
+                        allowed: false,
+                        reason: "Bilingual subtitles and creator packs need an available creator credit.",
+                        needLogin: isGuest,
+                        needUpgrade: !isGuest,
+                    };
                 }
             }
 
@@ -282,5 +315,6 @@ export default function useQuota(user) {
         handleUpgrade,
         redeemCode,
         isLoading,
+        getAuthHeaders,
     };
 }

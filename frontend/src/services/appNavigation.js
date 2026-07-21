@@ -2,6 +2,7 @@ const PAGE_PATHS = {
   home: "/",
   parse: "/parse",
   profile: "/profile",
+  redeem: "/redeem",
 };
 
 const HOME_SECTION_IDS = new Set([
