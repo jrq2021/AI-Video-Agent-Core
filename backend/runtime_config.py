@@ -78,17 +78,6 @@ def load_runtime_settings(environ: Optional[Mapping[str, str]] = None) -> Runtim
 
     jwt_secret = _non_empty(env, "JWT_SECRET") or _DEV_JWT_SECRET
     email_code_secret = _non_empty(env, "EMAIL_CODE_SECRET") or _DEV_EMAIL_CODE_SECRET
-    if app_env == "development" and environ is None:
-        missing_development = [
-            key for key in ("JWT_SECRET", "EMAIL_CODE_SECRET") if not _non_empty(env, key)
-        ]
-        if missing_development:
-            warnings.warn(
-                "开发环境正在使用临时安全密钥：" + "、".join(missing_development),
-                RuntimeWarning,
-                stacklevel=2,
-            )
-
     return RuntimeSettings(
         app_env=app_env,
         jwt_secret=jwt_secret,
@@ -105,4 +94,15 @@ def get_runtime_settings() -> RuntimeSettings:
 
 
 def validate_runtime_settings() -> RuntimeSettings:
-    return get_runtime_settings()
+    settings = get_runtime_settings()
+    if settings.app_env == "development":
+        missing_development = [
+            key for key in ("JWT_SECRET", "EMAIL_CODE_SECRET") if not _non_empty(os.environ, key)
+        ]
+        if missing_development:
+            warnings.warn(
+                "开发环境正在使用临时安全密钥：" + "、".join(missing_development),
+                RuntimeWarning,
+                stacklevel=2,
+            )
+    return settings

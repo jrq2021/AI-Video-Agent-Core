@@ -1,6 +1,13 @@
 import unittest
+import warnings
+from unittest.mock import patch
 
-from runtime_config import ConfigurationError, load_runtime_settings
+from runtime_config import (
+    ConfigurationError,
+    get_runtime_settings,
+    load_runtime_settings,
+    validate_runtime_settings,
+)
 
 
 class RuntimeConfigTest(unittest.TestCase):
@@ -35,6 +42,19 @@ class RuntimeConfigTest(unittest.TestCase):
             ("https://app.example", "https://www.example"),
         )
         self.assertEqual(settings.rate_limit_window_seconds, 900)
+
+    def test_development_warning_is_emitted_at_validation_not_every_read(self):
+        with patch.dict("os.environ", {"APP_ENV": "development"}, clear=True), warnings.catch_warnings(
+            record=True
+        ) as caught:
+            warnings.simplefilter("always")
+            get_runtime_settings()
+            get_runtime_settings()
+            self.assertEqual(caught, [])
+            validate_runtime_settings()
+
+        runtime_warnings = [warning for warning in caught if warning.category is RuntimeWarning]
+        self.assertEqual(len(runtime_warnings), 1)
 
 
 if __name__ == "__main__":
