@@ -21,6 +21,7 @@ import time
 import sqlite3
 import json
 import secrets
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timedelta
 from enum import Enum
@@ -48,6 +49,9 @@ PLAN_CONFIG: Dict[str, Dict[str, Any]] = {
         "daily_summaries": 1,        # 每日 AI 总结次数
         "batch_download": False,     # 批量下载
         "batch_max_count": 0,
+        "daily_batch_items": 0,
+        "daily_creator_credits": 0,
+        "batch_parse": False,
         "mindmap_export": False,     # 思维导图导出
         "watermark": False,          # 当前没有实现主动加水印/去水印链路
         "priority_support": False,
@@ -67,8 +71,11 @@ PLAN_CONFIG: Dict[str, Dict[str, Any]] = {
         "daily_downloads": 30,
         "max_quality": "源站可用",
         "daily_summaries": 10,
+        "daily_batch_items": 10,
+        "daily_creator_credits": 10,
         "batch_download": False,
-        "batch_max_count": 0,
+        "batch_parse": True,
+        "batch_max_count": 5,
         "mindmap_export": True,
         "watermark": False,
         "priority_support": False,
@@ -88,8 +95,11 @@ PLAN_CONFIG: Dict[str, Dict[str, Any]] = {
         "daily_downloads": 100,      # 合理公平使用上限
         "max_quality": "源站可用",
         "daily_summaries": 50,
+        "daily_batch_items": 30,
+        "daily_creator_credits": 30,
         "batch_download": False,
-        "batch_max_count": 0,
+        "batch_parse": True,
+        "batch_max_count": 15,
         "mindmap_export": True,
         "watermark": False,
         "priority_support": False,
@@ -111,13 +121,21 @@ DB_PATH = Path(__file__).parent / "data" / "membership.db"
 DB_PATH.parent.mkdir(exist_ok=True)
 
 
-def _get_db() -> sqlite3.Connection:
+@contextmanager
+def _get_db():
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     # 不启用外键约束：users 表在 users.db 中，无法跨数据库引用
     # 用户合法性由 auth.py 保证，此处只做数据记录
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_membership_db():
@@ -194,6 +212,18 @@ def init_membership_db():
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS quota_refunds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                quota_key TEXT NOT NULL,
+                audit_key TEXT NOT NULL,
+                reason TEXT DEFAULT '',
+                refunded_at INTEGER NOT NULL,
+                UNIQUE(user_id, quota_key, audit_key)
+            )
+        """)
+
 
 # ---------- 核心逻辑 ----------
 
@@ -205,9 +235,14 @@ class QuotaInfo:
     expires_at: int
     daily_downloads_limit: int
     daily_summaries_limit: int
+    daily_batch_items_limit: int
+    daily_creator_credits_limit: int
     daily_downloads_used: int
     daily_summaries_used: int
+    daily_batch_items_used: int
+    daily_creator_credits_used: int
     can_batch_download: bool
+    can_batch_parse: bool
     batch_max_count: int
     can_export_mindmap: bool
     max_quality: str
@@ -248,6 +283,53 @@ def _ensure_user_membership(conn: sqlite3.Connection, user_id: str):
         )
 
 
+ACTION_QUOTA_KEYS = {
+    "download": "downloads",
+    "summarize": "summaries",
+    "mindmap": "summaries",
+    "batch_parse": "batch_items",
+    "translate": "creator_credits",
+    "creator_pack": "creator_credits",
+}
+
+QUOTA_CONFIG_KEYS = {
+    "downloads": "daily_downloads",
+    "summaries": "daily_summaries",
+    "batch_items": "daily_batch_items",
+    "creator_credits": "daily_creator_credits",
+}
+
+
+def _build_quota_info(
+    user_id: str,
+    row: sqlite3.Row,
+    plan: str,
+    config: Dict[str, Any],
+    usage: Dict[str, int],
+    is_expired: bool = False,
+) -> QuotaInfo:
+    return QuotaInfo(
+        user_id=user_id,
+        plan=plan,
+        expires_at=row["expires_at"],
+        daily_downloads_limit=config["daily_downloads"],
+        daily_summaries_limit=config["daily_summaries"],
+        daily_batch_items_limit=config["daily_batch_items"],
+        daily_creator_credits_limit=config["daily_creator_credits"],
+        daily_downloads_used=usage.get("downloads", 0),
+        daily_summaries_used=usage.get("summaries", 0),
+        daily_batch_items_used=usage.get("batch_items", 0),
+        daily_creator_credits_used=usage.get("creator_credits", 0),
+        can_batch_download=config["batch_download"],
+        can_batch_parse=config["batch_parse"],
+        batch_max_count=config["batch_max_count"],
+        can_export_mindmap=config["mindmap_export"],
+        max_quality=config["max_quality"],
+        has_watermark=config["watermark"],
+        is_expired=is_expired,
+    )
+
+
 def get_user_quota(user_id: str) -> QuotaInfo:
     """
     获取用户当前额度信息。
@@ -277,21 +359,7 @@ def get_user_quota(user_id: str) -> QuotaInfo:
             plan = "free"
             config = PLAN_CONFIG["free"]
 
-    return QuotaInfo(
-        user_id=user_id,
-        plan=plan,
-        expires_at=row["expires_at"],
-        daily_downloads_limit=config["daily_downloads"],
-        daily_summaries_limit=config["daily_summaries"],
-        daily_downloads_used=usage.get("downloads", 0),
-        daily_summaries_used=usage.get("summaries", 0),
-        can_batch_download=config["batch_download"],
-        batch_max_count=config["batch_max_count"],
-        can_export_mindmap=config["mindmap_export"],
-        max_quality=config["max_quality"],
-        has_watermark=config["watermark"],
-        is_expired=is_expired,
-    )
+    return _build_quota_info(user_id, row, plan, config, usage, is_expired)
 
 
 def check_and_consume_quota(
@@ -300,6 +368,7 @@ def check_and_consume_quota(
     video_url: str = "",
     video_title: str = "",
     ip_address: str = "",
+    audit_key: str = "",
 ) -> Dict[str, Any]:
     """
     检查并消耗用户额度。原子操作，线程安全。
@@ -329,6 +398,8 @@ def check_and_consume_quota(
         "mindmap": "summaries",  # 思维导图与总结共享额度
     }
 
+    action_map.update(ACTION_QUOTA_KEYS)
+
     if action not in action_map:
         return {"allowed": False, "reason": f"未知操作类型: {action}"}
 
@@ -353,7 +424,7 @@ def check_and_consume_quota(
             plan = "free"
             config = PLAN_CONFIG["free"]
 
-        limit = config[quota_key.replace("summaries", "daily_summaries").replace("downloads", "daily_downloads")]
+        limit = config[QUOTA_CONFIG_KEYS[quota_key]]
         # 上面这行有点绕，直接用 action 判断更清晰
         if action == "download":
             limit = config["daily_downloads"]
@@ -363,19 +434,7 @@ def check_and_consume_quota(
         used = usage.get(quota_key, 0)
 
         if used >= limit:
-            quota = QuotaInfo(
-                user_id=user_id, plan=plan, expires_at=row["expires_at"],
-                daily_downloads_limit=config["daily_downloads"],
-                daily_summaries_limit=config["daily_summaries"],
-                daily_downloads_used=usage.get("downloads", 0),
-                daily_summaries_used=usage.get("summaries", 0),
-                can_batch_download=config["batch_download"],
-                batch_max_count=config["batch_max_count"],
-                can_export_mindmap=config["mindmap_export"],
-                max_quality=config["max_quality"],
-                has_watermark=config["watermark"],
-                is_expired=False,
-            )
+            quota = _build_quota_info(user_id, row, plan, config, usage)
             return {
                 "allowed": False,
                 "quota": quota,
@@ -398,19 +457,7 @@ def check_and_consume_quota(
 
         remaining = limit - (used + 1)
 
-    quota = QuotaInfo(
-        user_id=user_id, plan=plan, expires_at=row["expires_at"],
-        daily_downloads_limit=config["daily_downloads"],
-        daily_summaries_limit=config["daily_summaries"],
-        daily_downloads_used=usage.get("downloads", 0),
-        daily_summaries_used=usage.get("summaries", 0),
-        can_batch_download=config["batch_download"],
-        batch_max_count=config["batch_max_count"],
-        can_export_mindmap=config["mindmap_export"],
-        max_quality=config["max_quality"],
-        has_watermark=config["watermark"],
-        is_expired=False,
-    )
+    quota = _build_quota_info(user_id, row, plan, config, usage)
 
     return {
         "allowed": True,
@@ -418,6 +465,50 @@ def check_and_consume_quota(
         "reason": "",
         "remaining": remaining,
     }
+
+
+def refund_quota_once(
+    user_id: str,
+    quota_key: str,
+    audit_key: str,
+    reason: str = "",
+) -> bool:
+    """Refund one daily quota at most once for a durable operation identifier."""
+    if quota_key not in QUOTA_CONFIG_KEYS or not audit_key:
+        return False
+
+    now = int(time.time())
+    today = _get_today_str()
+    with _get_db() as conn:
+        _ensure_user_membership(conn, user_id)
+        _reset_daily_usage_if_needed(conn, user_id, today)
+        try:
+            conn.execute(
+                """INSERT INTO quota_refunds
+                   (user_id, quota_key, audit_key, reason, refunded_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (user_id, quota_key, audit_key, reason, now),
+            )
+        except sqlite3.IntegrityError:
+            return False
+
+        row = conn.execute(
+            "SELECT daily_usage_json FROM user_membership WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        usage = json.loads(row["daily_usage_json"])
+        usage[quota_key] = max(0, usage.get(quota_key, 0) - 1)
+        conn.execute(
+            "UPDATE user_membership SET daily_usage_json=?, updated_at=? WHERE user_id=?",
+            (json.dumps(usage), now, user_id),
+        )
+        conn.execute(
+            """INSERT INTO usage_logs
+               (user_id, action, video_url, video_title, consumed_at, ip_address)
+               VALUES (?, 'quota_refund', ?, ?, ?, '')""",
+            (user_id, audit_key, reason, now),
+        )
+    return True
 
 
 def set_user_plan(
@@ -459,6 +550,8 @@ def set_user_plan(
 def _membership_duration_days(plan: str, order_type: str) -> int:
     if plan == "ultra" or order_type == "lifetime":
         return 0
+    if order_type == "weekly":
+        return 7
     if order_type == "yearly":
         return 365
     return 30
@@ -485,7 +578,7 @@ def create_membership_coupon(
     """Create a membership coupon and return the generated/normalized code."""
     if plan not in ("pro", "ultra"):
         raise ValueError("券码套餐必须是 pro 或 ultra")
-    if order_type not in ("monthly", "yearly", "lifetime"):
+    if order_type not in ("weekly", "monthly", "yearly", "lifetime"):
         raise ValueError("券码类型必须是 monthly/yearly/lifetime")
     if plan == "ultra":
         order_type = "lifetime"
@@ -754,9 +847,14 @@ def get_guest_quota(ip_address: str) -> Dict[str, Any]:
         "plan": "guest",
         "daily_downloads_limit": GUEST_DAILY_DOWNLOADS,
         "daily_summaries_limit": GUEST_DAILY_SUMMARIES,
+        "daily_batch_items_limit": 0,
+        "daily_creator_credits_limit": 0,
         "daily_downloads_used": downloads_used,
         "daily_summaries_used": summaries_used,
+        "daily_batch_items_used": 0,
+        "daily_creator_credits_used": 0,
         "can_batch_download": False,
+        "can_batch_parse": False,
         "batch_max_count": 0,
         "can_export_mindmap": False,
         "max_quality": "源站可用",
