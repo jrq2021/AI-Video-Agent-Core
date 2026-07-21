@@ -7,6 +7,7 @@ import json
 import asyncio
 import queue as std_queue
 import urllib.request
+from urllib.parse import urlparse
 from decimal import Decimal
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -33,6 +34,7 @@ from membership import (
     update_order_gateway_data, redeem_membership_coupon,
 )
 from parse_history import init_parse_history_db, parse_history_store
+from batch_jobs import BatchProcessor, batch_job_store, init_batch_jobs_db
 from hupijiao import (
     HUPIJIAO_APPID,
     HupijiaoConfigError,
@@ -40,6 +42,20 @@ from hupijiao import (
     create_payment as create_hupijiao_payment,
     verify_hash as verify_hupijiao_hash,
 )
+
+
+async def batch_worker_loop(stop_event: asyncio.Event) -> None:
+    processor = BatchProcessor(batch_job_store, parse_history_store)
+    while not stop_event.is_set():
+        try:
+            processed = await asyncio.to_thread(processor.run_once)
+        except Exception as exc:
+            print(f"[batch-worker] {exc}")
+            processed = None
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=0.25 if processed else 1.0)
+        except asyncio.TimeoutError:
+            pass
 
 
 # ── 应用生命周期 ──
@@ -50,9 +66,15 @@ async def lifespan(app: FastAPI):
     init_email_verification_db()
     init_membership_db()
     init_parse_history_db()
+    init_batch_jobs_db()
+    app.state.batch_worker_stop = asyncio.Event()
+    app.state.batch_worker_task = asyncio.create_task(batch_worker_loop(app.state.batch_worker_stop))
     print("[启动] 数据库初始化完成")
-    yield
-    # 关闭时清理（可选）
+    try:
+        yield
+    finally:
+        app.state.batch_worker_stop.set()
+        await app.state.batch_worker_task
 
 app = FastAPI(title="万能视频下载器", version="1.0.0", lifespan=lifespan)
 
@@ -125,6 +147,10 @@ class ParseHistoryUpsertRequest(BaseModel):
 
 class ParseHistoryArtifactsRequest(BaseModel):
     artifacts: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BatchJobRequest(BaseModel):
+    urls: list[str]
 
 
 @app.get("/api/health")
@@ -268,6 +294,48 @@ async def patch_parse_history(
 async def clear_parse_history(user: dict = Depends(get_current_user)):
     parse_history_store.clear_records(user["id"])
     return {"success": True}
+
+
+def normalize_batch_urls(urls: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_url in urls:
+        url = str(raw_url or "").strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("Batch jobs only accept valid http(s) video URLs")
+        if url in seen:
+            raise ValueError("Duplicate video URLs are not allowed in one batch")
+        normalized.append(url)
+        seen.add(url)
+    if not normalized:
+        raise ValueError("Please provide at least one video URL")
+    return normalized
+
+
+@app.post("/api/batch-jobs")
+async def create_batch_job(req: BatchJobRequest, user: dict = Depends(get_current_user)):
+    quota = get_user_quota(user["id"])
+    if not quota.can_batch_parse:
+        raise HTTPException(status_code=403, detail="Batch parsing is available to Pro members")
+    try:
+        urls = normalize_batch_urls(req.urls)
+        if len(urls) > quota.batch_max_count:
+            raise ValueError(f"This membership can parse up to {quota.batch_max_count} links per batch")
+        job = batch_job_store.create_job(user["id"], urls, quota.batch_max_count)
+        return {"success": True, "job": job}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/batch-jobs")
+async def list_batch_jobs(user: dict = Depends(get_current_user)):
+    return {"success": True, "jobs": batch_job_store.list_jobs(user["id"])}
+
+
+@app.get("/api/batch-jobs/{job_id}")
+async def get_batch_job(job_id: str, user: dict = Depends(get_current_user)):
+    return {"success": True, "job": batch_job_store.get_job(user["id"], job_id)}
 
 
 @app.get("/api/membership/plans")

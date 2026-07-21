@@ -1,4 +1,3 @@
-import gc
 import tempfile
 import time
 import unittest
@@ -16,7 +15,6 @@ class CreatorMembershipTest(unittest.TestCase):
 
     def tearDown(self):
         membership.DB_PATH = self.original_db_path
-        gc.collect()
         self.temp_dir.cleanup()
 
     def test_weekly_coupon_grants_pro_for_seven_days(self):
