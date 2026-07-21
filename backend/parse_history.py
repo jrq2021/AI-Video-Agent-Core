@@ -12,6 +12,7 @@ MAX_SUBTITLE_CHARS = 500_000
 MAX_SUMMARY_CHARS = 120_000
 MAX_MINDMAP_CHARS = 120_000
 MAX_SEGMENTS_BYTES = 1_500_000
+MAX_CREATOR_PACK_BYTES = 120_000
 
 ARTIFACT_FIELDS = {
     "subtitles",
@@ -20,6 +21,9 @@ ARTIFACT_FIELDS = {
     "subtitle_type",
     "summary_text",
     "mindmap_text",
+    "translated_segments",
+    "translation_language",
+    "creator_pack",
 }
 
 
@@ -49,6 +53,7 @@ def _validate_artifacts(artifacts: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "mindmap_text": MAX_MINDMAP_CHARS,
         "language": 64,
         "subtitle_type": 64,
+        "translation_language": 64,
     }
     for field, limit in text_limits.items():
         if field in clean:
@@ -62,6 +67,20 @@ def _validate_artifacts(artifacts: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         encoded = json.dumps(clean["segments"], ensure_ascii=False)
         if len(encoded.encode("utf-8")) > MAX_SEGMENTS_BYTES:
             raise ValueError("segments 内容过大")
+
+    if "translated_segments" in clean:
+        if not isinstance(clean["translated_segments"], list):
+            raise ValueError("translated_segments must be a list")
+        encoded = json.dumps(clean["translated_segments"], ensure_ascii=False)
+        if len(encoded.encode("utf-8")) > MAX_SEGMENTS_BYTES:
+            raise ValueError("translated_segments is too large")
+
+    if "creator_pack" in clean:
+        if not isinstance(clean["creator_pack"], dict):
+            raise ValueError("creator_pack must be an object")
+        encoded = json.dumps(clean["creator_pack"], ensure_ascii=False)
+        if len(encoded.encode("utf-8")) > MAX_CREATOR_PACK_BYTES:
+            raise ValueError("creator_pack is too large")
 
     return clean
 
@@ -78,6 +97,12 @@ class ParseHistoryStore:
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table: str, name: str, definition: str) -> None:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if name not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
     def init_db(self) -> None:
         with closing(self._connect()) as conn, conn:
             conn.execute(
@@ -92,12 +117,18 @@ class ParseHistoryStore:
                     subtitle_type TEXT NOT NULL DEFAULT '',
                     summary_text TEXT NOT NULL DEFAULT '',
                     mindmap_text TEXT NOT NULL DEFAULT '',
+                    translated_segments_json TEXT NOT NULL DEFAULT '[]',
+                    translation_language TEXT NOT NULL DEFAULT '',
+                    creator_pack_json TEXT NOT NULL DEFAULT '{}',
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL,
                     PRIMARY KEY (user_id, record_key)
                 )
                 """
             )
+            self._ensure_column(conn, "parse_history", "translated_segments_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(conn, "parse_history", "translation_language", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "parse_history", "creator_pack_json", "TEXT NOT NULL DEFAULT '{}'")
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_parse_history_user_updated
@@ -116,6 +147,9 @@ class ParseHistoryStore:
             "subtitle_type": row["subtitle_type"] or "",
             "summary_text": row["summary_text"] or "",
             "mindmap_text": row["mindmap_text"] or "",
+            "translated_segments": json.loads(row["translated_segments_json"] or "[]"),
+            "translation_language": row["translation_language"] or "",
+            "creator_pack": json.loads(row["creator_pack_json"] or "{}"),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -175,6 +209,9 @@ class ParseHistoryStore:
                     "subtitle_type": existing["subtitle_type"],
                     "summary_text": existing["summary_text"],
                     "mindmap_text": existing["mindmap_text"],
+                    "translated_segments": json.loads(existing["translated_segments_json"] or "[]"),
+                    "translation_language": existing["translation_language"],
+                    "creator_pack": json.loads(existing["creator_pack_json"] or "{}"),
                 }
                 if existing
                 else {}
@@ -187,8 +224,9 @@ class ParseHistoryStore:
                 INSERT INTO parse_history (
                     user_id, record_key, video_json, subtitles, segments_json,
                     language, subtitle_type, summary_text, mindmap_text,
+                    translated_segments_json, translation_language, creator_pack_json,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id, record_key) DO UPDATE SET
                     video_json=excluded.video_json,
                     subtitles=excluded.subtitles,
@@ -197,6 +235,9 @@ class ParseHistoryStore:
                     subtitle_type=excluded.subtitle_type,
                     summary_text=excluded.summary_text,
                     mindmap_text=excluded.mindmap_text,
+                    translated_segments_json=excluded.translated_segments_json,
+                    translation_language=excluded.translation_language,
+                    creator_pack_json=excluded.creator_pack_json,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -209,6 +250,9 @@ class ParseHistoryStore:
                     merged_artifacts.get("subtitle_type", ""),
                     merged_artifacts.get("summary_text", ""),
                     merged_artifacts.get("mindmap_text", ""),
+                    json.dumps(merged_artifacts.get("translated_segments", []), ensure_ascii=False),
+                    merged_artifacts.get("translation_language", ""),
+                    json.dumps(merged_artifacts.get("creator_pack", {}), ensure_ascii=False),
                     created_at,
                     now,
                 ),
