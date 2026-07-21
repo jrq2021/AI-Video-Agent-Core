@@ -44,6 +44,7 @@ from hupijiao import (
     create_payment as create_hupijiao_payment,
     verify_hash as verify_hupijiao_hash,
 )
+from runtime_config import get_runtime_settings, validate_runtime_settings
 
 
 async def batch_worker_loop(stop_event: asyncio.Event) -> None:
@@ -64,6 +65,7 @@ async def batch_worker_loop(stop_event: asyncio.Event) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时初始化数据库
+    validate_runtime_settings()
     init_db()
     init_email_verification_db()
     init_membership_db()
@@ -81,9 +83,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="万能视频下载器", version="1.0.0", lifespan=lifespan)
 
 # CORS 允许前端访问
+runtime_settings = get_runtime_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=list(runtime_settings.cors_allow_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

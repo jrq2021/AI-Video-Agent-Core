@@ -8,6 +8,7 @@ from email.message import EmailMessage
 from typing import Optional
 
 from auth import EMAIL_RE, _get_db, get_user_by_email, update_user_password
+from runtime_config import get_runtime_settings
 
 
 VALID_PURPOSES = {"register", "reset_password"}
@@ -19,9 +20,6 @@ PURPOSE_LABELS = {
 EMAIL_CODE_EXPIRE_SECONDS = int(os.environ.get("EMAIL_CODE_EXPIRE_SECONDS", "600"))
 EMAIL_CODE_COOLDOWN_SECONDS = int(os.environ.get("EMAIL_CODE_COOLDOWN_SECONDS", "60"))
 EMAIL_CODE_MAX_ATTEMPTS = int(os.environ.get("EMAIL_CODE_MAX_ATTEMPTS", "5"))
-EMAIL_CODE_SECRET = os.environ.get("EMAIL_CODE_SECRET") or os.environ.get("JWT_SECRET") or "ai-video-email-code"
-
-
 def _now() -> int:
     return int(time.time())
 
@@ -41,7 +39,8 @@ def _normalize_purpose(purpose: str) -> str:
 
 
 def _hash_code(email: str, purpose: str, code: str) -> str:
-    raw = f"{EMAIL_CODE_SECRET}:{email}:{purpose}:{code}".encode("utf-8")
+    secret = get_runtime_settings().email_code_secret
+    raw = f"{secret}:{email}:{purpose}:{code}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 

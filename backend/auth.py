@@ -20,12 +20,12 @@ from typing import Optional
 
 import jwt
 from fastapi import HTTPException, Request
+from runtime_config import get_runtime_settings
 
 # ---------- 配置 ----------
 DB_PATH = Path(__file__).parent / "data" / "users.db"
 DB_PATH.parent.mkdir(exist_ok=True)
 
-JWT_SECRET = os.environ.get("JWT_SECRET", secrets.token_hex(32))
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 72  # Token 有效期 3 天
 
@@ -180,13 +180,17 @@ def create_token(user_id: str) -> str:
         "iat": now,
         "exp": now + JWT_EXPIRE_HOURS * 3600,
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, get_runtime_settings().jwt_secret, algorithm=JWT_ALGORITHM)
 
 
 def decode_token(token: str) -> Optional[str]:
     """解码 token，返回 user_id；无效返回 None"""
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(
+            token,
+            get_runtime_settings().jwt_secret,
+            algorithms=[JWT_ALGORITHM],
+        )
         return payload.get("sub")
     except jwt.ExpiredSignatureError:
         return None
