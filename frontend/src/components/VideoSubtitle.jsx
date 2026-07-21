@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { marked } from "marked";
 import useVideoSync from "../hooks/useVideoSync";
 import MindMapView from "./MindMapView";
+import CreatorPackPanel from "./CreatorPackPanel";
 
 /* ── 配置 marked ────────────────────────────────────────────────── */
 marked.setOptions({ breaks: true, gfm: true });
@@ -163,6 +164,7 @@ export default function VideoSubtitle({
   openUpgrade,
   initialArtifacts,
   onArtifactsChange,
+  creatorProps,
 }) {
   const bvid = extractBvid(originalUrl);
   const isBili = isBilibiliUrl(originalUrl);
@@ -682,6 +684,7 @@ export default function VideoSubtitle({
             { key: "summary", label: "核心总结", icon: Icon.sparkles },
             { key: "subtitles", label: "完整字幕", icon: Icon.subtitles },
             { key: "mindmap", label: "思维导图", icon: Icon.mindmap },
+            { key: "creator", label: "创作包", icon: Icon.sparkles },
           ]}
           active={activeTab}
           onChange={setActiveTab}
@@ -1152,6 +1155,20 @@ export default function VideoSubtitle({
                 )}
               </div>
             ))}
+
+          {activeTab === "creator" && (
+            <div className="p-4">
+              <CreatorPackPanel
+                {...creatorProps}
+                recordKey={initialArtifacts?.record_key}
+                title={titleCacheRef.current || videoData?.title || initialArtifacts?.title || ""}
+                segments={segments}
+                subtitles={subtitlesCacheRef.current || extractedSubtitles || videoData?.subtitles || ""}
+                artifacts={initialArtifacts}
+                onArtifactsChange={persistArtifacts}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>
