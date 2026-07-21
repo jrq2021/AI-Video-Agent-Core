@@ -5,6 +5,7 @@
 import os
 import json
 import asyncio
+import uuid
 import queue as std_queue
 import urllib.request
 from urllib.parse import urlparse
@@ -31,10 +32,11 @@ from membership import (
     get_user_quota, check_and_consume_quota, get_all_plans, get_plan_config,
     create_order, mark_order_paid, QuotaInfo, init_membership_db,
     get_guest_quota, check_and_consume_guest_quota, get_order,
-    update_order_gateway_data, redeem_membership_coupon,
+    update_order_gateway_data, redeem_membership_coupon, refund_quota_once,
 )
 from parse_history import init_parse_history_db, parse_history_store
 from batch_jobs import BatchProcessor, batch_job_store, init_batch_jobs_db
+from creator_tools import ALLOWED_TARGET_LANGUAGES, create_creator_pack, translate_segments
 from hupijiao import (
     HUPIJIAO_APPID,
     HupijiaoConfigError,
@@ -151,6 +153,15 @@ class ParseHistoryArtifactsRequest(BaseModel):
 
 class BatchJobRequest(BaseModel):
     urls: list[str]
+
+
+class SubtitleTranslationRequest(BaseModel):
+    record_key: str
+    target_language: str
+
+
+class CreatorPackRequest(BaseModel):
+    record_key: str
 
 
 @app.get("/api/health")
@@ -336,6 +347,91 @@ async def list_batch_jobs(user: dict = Depends(get_current_user)):
 @app.get("/api/batch-jobs/{job_id}")
 async def get_batch_job(job_id: str, user: dict = Depends(get_current_user)):
     return {"success": True, "job": batch_job_store.get_job(user["id"], job_id)}
+
+
+def get_owned_parse_record(user_id: str, record_key: str) -> Dict[str, Any]:
+    try:
+        record = parse_history_store.get_record(user_id, record_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not record:
+        raise HTTPException(status_code=404, detail="Parse history record not found")
+    return record
+
+
+@app.post("/api/video/translate-subtitles")
+async def translate_subtitles(
+    req: SubtitleTranslationRequest,
+    user: dict = Depends(get_current_user),
+):
+    record = get_owned_parse_record(user["id"], req.record_key)
+    if req.target_language not in ALLOWED_TARGET_LANGUAGES:
+        raise HTTPException(status_code=400, detail="Unsupported target language")
+    if (
+        record.get("translation_language") == req.target_language
+        and record.get("translated_segments")
+    ):
+        return {"success": True, "data": record["translated_segments"], "cached": True}
+    if not record.get("segments"):
+        raise HTTPException(status_code=400, detail="Extract subtitles before translating them")
+
+    audit_key = f"translate:{req.record_key}:{req.target_language}:{uuid.uuid4().hex}"
+    quota_result = check_and_consume_quota(
+        user["id"], "translate", audit_key=audit_key
+    )
+    if not quota_result.get("allowed"):
+        raise HTTPException(status_code=429, detail=quota_result.get("reason", "Creator quota exceeded"))
+    try:
+        translated_segments = await asyncio.to_thread(
+            translate_segments,
+            record["segments"],
+            req.target_language,
+        )
+        parse_history_store.update_artifacts(
+            user["id"],
+            req.record_key,
+            {
+                "translated_segments": translated_segments,
+                "translation_language": req.target_language,
+            },
+        )
+    except Exception as exc:
+        refund_quota_once(user["id"], "creator_credits", audit_key, str(exc))
+        raise HTTPException(status_code=502, detail=f"Subtitle translation failed: {exc}")
+    return {"success": True, "data": translated_segments, "cached": False}
+
+
+@app.post("/api/video/creator-pack")
+async def generate_creator_pack(
+    req: CreatorPackRequest,
+    user: dict = Depends(get_current_user),
+):
+    record = get_owned_parse_record(user["id"], req.record_key)
+    if record.get("creator_pack"):
+        return {"success": True, "data": record["creator_pack"], "cached": True}
+    if len(str(record.get("subtitles", "")).strip()) < 20:
+        raise HTTPException(status_code=400, detail="Extract usable subtitles before generating a creator pack")
+
+    audit_key = f"creator-pack:{req.record_key}:{uuid.uuid4().hex}"
+    quota_result = check_and_consume_quota(
+        user["id"], "creator_pack", audit_key=audit_key
+    )
+    if not quota_result.get("allowed"):
+        raise HTTPException(status_code=429, detail=quota_result.get("reason", "Creator quota exceeded"))
+    try:
+        pack = await asyncio.to_thread(
+            create_creator_pack,
+            record["subtitles"],
+            record.get("segments", []),
+            record.get("title", ""),
+        )
+        parse_history_store.update_artifacts(
+            user["id"], req.record_key, {"creator_pack": pack}
+        )
+    except Exception as exc:
+        refund_quota_once(user["id"], "creator_credits", audit_key, str(exc))
+        raise HTTPException(status_code=502, detail=f"Creator pack generation failed: {exc}")
+    return {"success": True, "data": pack, "cached": False}
 
 
 @app.get("/api/membership/plans")
