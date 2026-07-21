@@ -1,5 +1,6 @@
 import unittest
 import warnings
+from pathlib import Path
 from unittest.mock import patch
 
 from runtime_config import (
@@ -55,6 +56,24 @@ class RuntimeConfigTest(unittest.TestCase):
 
         runtime_warnings = [warning for warning in caught if warning.category is RuntimeWarning]
         self.assertEqual(len(runtime_warnings), 1)
+
+    def test_template_and_launcher_document_standard_startup(self):
+        template = Path(__file__).with_name(".env.example").read_text(encoding="utf-8")
+        for key in (
+            "APP_ENV",
+            "JWT_SECRET",
+            "EMAIL_CODE_SECRET",
+            "CORS_ALLOW_ORIGINS",
+            "AUTH_RATE_LIMIT_WINDOW_SECONDS",
+        ):
+            self.assertIn(key, template)
+
+        script = Path(__file__).parent.parent / "scripts" / "start-local.ps1"
+        self.assertTrue(script.exists())
+        source = script.read_text(encoding="utf-8")
+        self.assertIn(".venv\\Scripts\\python.exe", source)
+        self.assertIn("BackendPort = 8000", source)
+        self.assertIn("FrontendPort = 5173", source)
 
 
 if __name__ == "__main__":
