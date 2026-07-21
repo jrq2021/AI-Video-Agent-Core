@@ -26,6 +26,7 @@
 | `frontend/src/services/membershipCopy.test.js` | Node tests for public claims. |
 | `frontend/src/components/PricingSection.jsx` | Price-free package cards. |
 | `frontend/src/components/UpgradeModal.jsx` | Price-free upgrade explanation. |
+| `frontend/src/components/MembershipOrderModal.jsx` | Price-free order-type and plan labels. |
 | `frontend/src/components/FAQSection.jsx` | Redemption and protected-content FAQ. |
 
 ## Task 1: Add the tested copy source
@@ -106,6 +107,7 @@ git add frontend/src/services/membershipCopy.js frontend/src/services/membership
 **Files:**
 - Modify: `frontend/src/components/PricingSection.jsx`
 - Modify: `frontend/src/components/UpgradeModal.jsx`
+- Modify: `frontend/src/components/MembershipOrderModal.jsx`
 - Modify: `frontend/src/components/FAQSection.jsx`
 - Modify: `frontend/src/services/membershipCopy.test.js`
 
@@ -119,7 +121,7 @@ git add frontend/src/services/membershipCopy.js frontend/src/services/membership
 import fs from "node:fs";
 
 test("membership entry components import canonical copy", () => {
-  for (const path of ["src/components/PricingSection.jsx", "src/components/UpgradeModal.jsx", "src/components/FAQSection.jsx"]) {
+  for (const path of ["src/components/PricingSection.jsx", "src/components/UpgradeModal.jsx", "src/components/MembershipOrderModal.jsx", "src/components/FAQSection.jsx"]) {
     const source = fs.readFileSync(path, "utf8");
     assert.match(source, /membershipCopy/);
     assert.doesNotMatch(source, /批量下载（开发中）/);
@@ -147,6 +149,11 @@ import { getMembershipPlanCopy } from "../services/membershipCopy";
 const proPlan = getMembershipPlanCopy("pro");
 const ultraPlan = getMembershipPlanCopy("ultra");
 // Replace price rows with proPlan.modalSummary and ultraPlan.modalSummary.
+
+// MembershipOrderModal.jsx
+import { getMembershipPlanCopy } from "../services/membershipCopy";
+const ORDER_TYPE_LABELS = { free: "免费体验", weekly: "周卡兑换", monthly: "月卡兑换", yearly: "年卡兑换", lifetime: "已有用户权益" };
+// Render a matching plan's name and nameEn through getMembershipPlanCopy(data.plan).
 
 // FAQSection.jsx
 import { MEMBERSHIP_FAQS } from "../services/membershipCopy";
