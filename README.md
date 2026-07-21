@@ -172,3 +172,32 @@ WHISPER_MODEL=base
 ## 📄 License
 
 MIT License
+
+---
+
+## 闲鱼兑换码交付与创作包
+
+### 面向买家的使用步骤
+
+1. 注册并登录网站账号。
+2. 打开 `/redeem`，输入卖家发送的兑换码；价格区也可跳转到该页面。
+3. 兑换成功后，页面会显示套餐到期日、当天剩余批量解析条数与创作额度。
+4. 前往 `/parse`：可单条解析，也可由 Pro/Ultra 粘贴多行**公开且有权处理**的视频链接进行批量解析。
+5. 解析记录的「创作包」页签可生成中英双语字幕、5 个标题、60 秒口播提纲、小红书笔记、公众号摘要及高光时间点；结果可导出为 SRT/VTT/Markdown。
+
+### 卖家本地券码命令
+
+券码只通过本地命令生成、查看与作废，不提供公网管理接口。请在 `backend` 目录执行：
+
+```powershell
+# 生成 3 个 Pro 周卡；还可将 --type 改为 monthly 或 yearly
+python coupon_admin.py create --plan pro --type weekly --count 3 --note "xianyu-2026"
+
+# 查询当前可用券码
+python coupon_admin.py list --status active
+
+# 作废尚未兑换的券码
+python coupon_admin.py revoke JD-XXXX-XXXX-XXXX
+```
+
+交付时请向买家发送券码，并说明：先登录、访问 `/redeem`、查看到期日和当日额度。遇到“无效/已使用/已过期”提示时，卖家应先用 `list` 查询券码状态；不要承诺或尝试绕过付费、私密内容限制，也不要处理无权使用的视频。
