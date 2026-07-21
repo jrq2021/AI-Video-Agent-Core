@@ -1,16 +1,12 @@
 import { useEffect } from "react";
-
-const PLAN_LABELS = {
-  free: "免费版",
-  pro: "专业版 Pro",
-  ultra: "旗舰版 Ultra",
-};
+import { getMembershipPlanCopy } from "../services/membershipCopy";
 
 const ORDER_TYPE_LABELS = {
-  free: "免费",
-  monthly: "月付",
-  yearly: "年付",
-  lifetime: "终身买断",
+  free: "免费体验",
+  weekly: "周卡兑换",
+  monthly: "月卡兑换",
+  yearly: "年卡兑换",
+  lifetime: "已有用户权益",
 };
 
 export default function MembershipOrderModal({ data, onClose }) {
@@ -25,6 +21,7 @@ export default function MembershipOrderModal({ data, onClose }) {
 
   if (!data) return null;
 
+  const planCopy = getMembershipPlanCopy(data.plan);
   const isSuccess = data.type === "order_created" || data.type === "free";
   const tone = isSuccess
     ? "is-success"
@@ -111,7 +108,7 @@ export default function MembershipOrderModal({ data, onClose }) {
               <div>
                 <dt>套餐</dt>
                 <dd>
-                  {PLAN_LABELS[data.plan] || data.plan}
+                  {planCopy ? `${planCopy.name} ${planCopy.nameEn}` : data.plan}
                 </dd>
               </div>
             )}
@@ -121,12 +118,6 @@ export default function MembershipOrderModal({ data, onClose }) {
                 <dd>
                   {ORDER_TYPE_LABELS[data.orderType] || data.orderType}
                 </dd>
-              </div>
-            )}
-            {data.amount !== undefined && (
-              <div>
-                <dt>金额</dt>
-                <dd>¥{data.amount}</dd>
               </div>
             )}
             {data.orderId && (

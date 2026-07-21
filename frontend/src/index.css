@@ -1973,6 +1973,15 @@
   font-size: 0.66rem;
 }
 
+.pricing-plan-card__price .pricing-plan-card__delivery {
+  max-width: 18rem;
+  margin: 0;
+  color: rgba(220, 240, 244, 0.84);
+  font-size: 0.86rem;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
 .pricing-plan-card__features {
   display: flex;
   flex: 1;

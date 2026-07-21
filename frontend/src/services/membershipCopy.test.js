@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {
   MEMBERSHIP_FAQS,
   MEMBERSHIP_PLAN_CARDS,
@@ -22,4 +23,17 @@ test("FAQ explains redemption and protected-content boundaries", () => {
   const publicCopy = JSON.stringify(MEMBERSHIP_FAQS);
   assert.match(publicCopy, /\/redeem/);
   assert.match(publicCopy, /不绕过付费、私密、地区或版权访问限制/);
+});
+
+test("membership entry components import canonical copy", () => {
+  for (const path of [
+    "src/components/PricingSection.jsx",
+    "src/components/UpgradeModal.jsx",
+    "src/components/MembershipOrderModal.jsx",
+    "src/components/FAQSection.jsx",
+  ]) {
+    const source = fs.readFileSync(path, "utf8");
+    assert.match(source, /membershipCopy/);
+    assert.doesNotMatch(source, /批量下载（开发中）/);
+  }
 });
