@@ -60,24 +60,22 @@ export default function VideoInput({
           ? "游客"
           : "免费版";
 
+  const planBadgeClass = isGuest
+    ? "plan-pill plan-pill--guest"
+    : q.plan === "pro"
+      ? "plan-pill plan-pill--pro"
+      : q.plan === "ultra"
+        ? "plan-pill plan-pill--ultra"
+        : "plan-pill plan-pill--free";
+
   return (
-    <form onSubmit={handleSubmit} className="mt-0">
+    <form onSubmit={handleSubmit} className="video-input-panel">
       {/* ── 额度指示条 ── */}
-      <div className="flex items-center justify-between mb-3 px-1">
+      <div className="video-input-meta mb-3 flex items-center justify-between px-1">
         <div className="flex items-center gap-2 text-sm">
           {/* 身份标识 */}
-          <span
-            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
-              isGuest
-                ? "bg-dark-100 text-dark-500"
-                : q.plan === "pro"
-                  ? "bg-primary-100 text-primary-700"
-                  : q.plan === "ultra"
-                    ? "bg-purple-100 text-purple-700"
-                    : "bg-dark-100 text-dark-600"
-            }`}
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+          <span className={planBadgeClass}>
+            <span className="plan-pill__dot"></span>
             {planLabel}
           </span>
 
@@ -176,7 +174,7 @@ export default function VideoInput({
 
       {/* ── 输入框 ── */}
       <div className="relative">
-        <div className="flex items-center bg-white border border-dark-200 rounded-2xl shadow-lg shadow-dark-900/5 focus-within:border-primary-400 focus-within:ring-4 focus-within:ring-primary-50 transition-all duration-200 overflow-hidden">
+        <div className="video-input-shell flex items-center overflow-hidden rounded-2xl border border-dark-200 bg-white shadow-lg shadow-dark-900/5 transition-all duration-200 focus-within:border-primary-400 focus-within:ring-4 focus-within:ring-primary-50">
           {/* URL icon */}
           <div className="pl-5 pr-3">
             <svg

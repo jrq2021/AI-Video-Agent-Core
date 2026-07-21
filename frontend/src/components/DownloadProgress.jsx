@@ -32,6 +32,7 @@ export default function DownloadProgress({ progress }) {
         <div className="flex items-center justify-between text-xs text-dark-400">
           <span>{percent.toFixed(1)}%</span>
           <div className="flex items-center gap-4">
+            {progress.phaseLabel && <span>{progress.phaseLabel}</span>}
             {progress.speed > 0 && <span>{formatSpeed(progress.speed)}</span>}
             {progress.eta > 0 && <span>剩余 {formatETA(progress.eta)}</span>}
           </div>

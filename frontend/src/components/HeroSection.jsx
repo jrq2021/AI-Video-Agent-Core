@@ -1,87 +1,83 @@
-export default function HeroSection({ theme = "cinematic" }) {
-  if (theme !== "cinematic") {
-    return (
-      <section className="pt-16 pb-8 text-center animate-fade-in-up">
-        <div className="max-w-3xl mx-auto px-4">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-primary-50 border border-primary-100 rounded-full mb-6">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-primary-500"></span>
-            </span>
-            <span className="text-xs font-semibold text-primary-700">
-              支持 1000+ 平台
-            </span>
-          </div>
+import { useEffect, useRef, useState } from "react";
 
-          <h1 className="text-4xl md:text-5xl font-extrabold text-dark-900 tracking-tight leading-tight mb-4">
-            万能视频下载，
-            <span className="bg-gradient-to-r from-primary-600 to-blue-400 bg-clip-text text-transparent">
-              随时随地保存精彩
-            </span>
-          </h1>
+export default function HeroSection() {
+  const sectionRef = useRef(null);
+  const videoRef = useRef(null);
+  const [videoReady, setVideoReady] = useState(false);
 
-          <p className="text-dark-400 text-base md:text-lg max-w-xl mx-auto leading-relaxed">
-            粘贴视频链接，一键下载高清无水印视频。支持
-            YouTube、B站等上千个平台，快速、免费、安全。
-          </p>
+  useEffect(() => {
+    const section = sectionRef.current;
+    const video = videoRef.current;
+    if (!section || !video) return undefined;
 
-          <div className="flex flex-wrap justify-center gap-8 mt-8 text-sm text-dark-400">
-            {[
-              { icon: "🎬", text: "1000+ 平台支持" },
-              { icon: "⚡", text: "极速下载" },
-              { icon: "🎯", text: "高清画质" },
-              { icon: "🔒", text: "安全可靠" },
-            ].map((f) => (
-              <div key={f.text} className="flex items-center gap-2">
-                <span className="text-lg">{f.icon}</span>
-                <span className="font-medium text-dark-500">{f.text}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      setVideoReady(true);
+    }
+
+    const syncPlayback = (isVisible) => {
+      if (isVisible && !document.hidden) {
+        video.play().catch(() => {});
+      } else {
+        video.pause();
+      }
+    };
+
+    const observer = new IntersectionObserver(
+      ([entry]) => syncPlayback(entry.isIntersecting),
+      { threshold: 0.05 },
     );
-  }
+    const handleVisibilityChange = () =>
+      syncPlayback(section.getBoundingClientRect().bottom > 0);
+
+    observer.observe(section);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
 
   return (
-    <section className="relative overflow-hidden pt-16 pb-6 md:pt-24 md:pb-10 animate-fade-in-up">
-      <div
-        className="absolute inset-0 opacity-95"
+    <section
+      ref={sectionRef}
+      className="relative z-10 flex min-h-[100svh] items-center justify-center px-6 pb-24 pt-32 text-center sm:pb-28 sm:pt-36"
+    >
+      <video
+        ref={videoRef}
+        className={`cinematic-hero__video ${videoReady ? "is-ready" : ""}`}
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="auto"
+        poster="/assets/theme/hero-video-poster.webp"
+        onLoadedData={() => setVideoReady(true)}
+        onCanPlay={() => setVideoReady(true)}
+        onError={() => setVideoReady(false)}
         aria-hidden="true"
-        style={{
-          backgroundImage:
-            "linear-gradient(90deg, rgba(255, 250, 236, 0.98) 0%, rgba(255, 250, 236, 0.88) 36%, rgba(255, 250, 236, 0.2) 66%), url('/assets/theme/pop-hero.png')",
-          backgroundSize: "cover",
-          backgroundPosition: "center right",
-        }}
-      />
-      <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#fffaf0] via-[#fffaf0]/80 to-transparent" />
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6">
-        <div className="max-w-2xl">
-          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-[#0b64ff] mb-5">
-            Video capture made playful
-          </p>
-          <h1 className="text-4xl md:text-6xl font-extrabold leading-tight text-[#101828]">
-            万能视频下载
-            <span className="block bg-gradient-to-r from-[#0b64ff] via-[#ff2da3] to-[#f2bf21] bg-clip-text text-transparent">
-              像收藏作品一样保存视频
-            </span>
-          </h1>
-          <p className="mt-6 text-base md:text-lg leading-8 text-[#475467] max-w-xl">
-            粘贴链接，解析高清画质、音频与字幕。把复杂的视频获取流程收进一个安静、快速、可控的工作台。
-          </p>
+      >
+        <source src="/assets/theme/hero-background.mp4" type="video/mp4" />
+      </video>
 
-          <div className="mt-8 grid grid-cols-2 sm:flex sm:flex-wrap gap-3">
-            {["1000+ 平台", "高清有音", "字幕总结", "本地保存"].map((item) => (
-              <span
-                key={item}
-                className="inline-flex items-center justify-center rounded-full border border-white/70 bg-white/70 px-4 py-2 text-sm font-semibold text-[#184078] shadow-sm backdrop-blur-md"
-              >
-                {item}
-              </span>
-            ))}
-          </div>
-        </div>
+      <div className="cinematic-hero__copy relative z-10 mx-auto flex w-full max-w-7xl flex-col items-center">
+        <h1 className="hero-title animate-fade-rise max-w-6xl text-white">
+          让<em>灵感</em>，
+          <br />
+          <em>穿过寂静生长。</em>
+        </h1>
+
+        <p className="animate-fade-rise-delay mt-8 max-w-2xl text-base leading-relaxed text-white/65 sm:text-lg">
+          为深度思考者、勇敢创作者与安静的行动派，打造专注而自由的数字空间。
+          在纷扰之中，留住真正值得保存的画面与声音。
+        </p>
+
+        <a
+          href="#download-workspace"
+          className="liquid-glass animate-fade-rise-delay-2 mt-12 inline-flex cursor-pointer items-center justify-center rounded-full px-14 py-5 text-base font-medium text-white transition-transform duration-300 hover:scale-[1.03] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+        >
+          开始解析
+        </a>
       </div>
     </section>
   );

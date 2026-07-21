@@ -26,30 +26,29 @@ export default function MembershipOrderModal({ data, onClose }) {
   if (!data) return null;
 
   const isSuccess = data.type === "order_created" || data.type === "free";
-  const accent = isSuccess
-    ? "from-primary-600 to-purple-500"
+  const tone = isSuccess
+    ? "is-success"
     : data.type === "login_required"
-      ? "from-amber-500 to-orange-500"
-      : "from-red-500 to-rose-500";
+      ? "is-warning"
+      : "is-error";
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      className="membership-order-modal fixed inset-0 z-[60] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-label={data.title}
     >
       <button
-        className="absolute inset-0 bg-dark-900/45 backdrop-blur-md"
+        className="membership-order-modal__backdrop absolute inset-0"
         onClick={onClose}
         aria-label="关闭弹窗"
       />
 
-      <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-white/80 bg-white shadow-2xl shadow-blue-950/15">
-        <div className={`h-1.5 bg-gradient-to-r ${accent}`} />
+      <div className={`membership-order-modal__panel ${tone}`}>
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 rounded-xl p-2 text-dark-300 transition hover:bg-dark-50 hover:text-dark-700"
+          className="membership-order-modal__close"
           aria-label="关闭"
         >
           <svg
@@ -67,10 +66,9 @@ export default function MembershipOrderModal({ data, onClose }) {
           </svg>
         </button>
 
-        <div className="p-6 pt-8">
-          <div
-            className={`mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br ${accent} text-white shadow-lg shadow-blue-500/20`}
-          >
+        <div className="membership-order-modal__glow" aria-hidden="true" />
+        <div className="membership-order-modal__content">
+          <div className="membership-order-modal__icon">
             {isSuccess ? (
               <svg
                 className="h-7 w-7"
@@ -102,56 +100,57 @@ export default function MembershipOrderModal({ data, onClose }) {
             )}
           </div>
 
-          <h3 className="text-2xl font-bold text-dark-900">{data.title}</h3>
-          <p className="mt-2 text-sm leading-6 text-dark-500">
-            {data.message}
+          <p className="membership-order-modal__eyebrow">
+            {isSuccess ? "操作已记录" : "需要处理"}
           </p>
+          <h3>{data.title}</h3>
+          <p className="membership-order-modal__message">{data.message}</p>
 
-          <dl className="mt-5 space-y-2 rounded-2xl bg-dark-50/80 p-4 text-sm">
+          <dl className="membership-order-modal__details">
             {data.plan && (
-              <div className="flex items-center justify-between gap-4">
-                <dt className="text-dark-400">套餐</dt>
-                <dd className="font-semibold text-dark-800">
+              <div>
+                <dt>套餐</dt>
+                <dd>
                   {PLAN_LABELS[data.plan] || data.plan}
                 </dd>
               </div>
             )}
             {data.orderType && (
-              <div className="flex items-center justify-between gap-4">
-                <dt className="text-dark-400">类型</dt>
-                <dd className="font-semibold text-dark-800">
+              <div>
+                <dt>类型</dt>
+                <dd>
                   {ORDER_TYPE_LABELS[data.orderType] || data.orderType}
                 </dd>
               </div>
             )}
             {data.amount !== undefined && (
-              <div className="flex items-center justify-between gap-4">
-                <dt className="text-dark-400">金额</dt>
-                <dd className="font-semibold text-dark-800">¥{data.amount}</dd>
+              <div>
+                <dt>金额</dt>
+                <dd>¥{data.amount}</dd>
               </div>
             )}
             {data.orderId && (
-              <div className="flex items-start justify-between gap-4">
-                <dt className="text-dark-400">订单号</dt>
-                <dd className="max-w-[210px] break-all text-right text-xs font-medium text-dark-500">
+              <div>
+                <dt>订单号</dt>
+                <dd className="membership-order-modal__order-id">
                   {data.orderId}
                 </dd>
               </div>
             )}
             {data.record?.clickedAt && (
-              <div className="flex items-center justify-between gap-4">
-                <dt className="text-dark-400">记录时间</dt>
-                <dd className="font-medium text-dark-600">
+              <div>
+                <dt>记录时间</dt>
+                <dd>
                   {data.record.clickedAt}
                 </dd>
               </div>
             )}
           </dl>
 
-          <div className="mt-6 flex items-center justify-end">
+          <div className="membership-order-modal__actions">
             <button
               onClick={onClose}
-              className="rounded-2xl bg-dark-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-dark-800 active:scale-95"
+              className="liquid-glass action-glass"
             >
               知道了
             </button>

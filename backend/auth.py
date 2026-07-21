@@ -135,6 +135,34 @@ def get_user_by_id(user_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def get_user_by_email(email: str) -> Optional[dict]:
+    email = email.strip().lower()
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT id, username, email FROM users WHERE email=?",
+            (email,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_user_password(email: str, password: str) -> dict:
+    email = email.strip().lower()
+    if len(password) < 6:
+        raise ValueError("密码至少 6 位")
+
+    user = get_user_by_email(email)
+    if not user:
+        raise ValueError("邮箱未注册")
+
+    with _get_db() as conn:
+        conn.execute(
+            "UPDATE users SET password_hash=? WHERE id=?",
+            (_hash_password(password), user["id"]),
+        )
+
+    return user
+
+
 # ---------- JWT Token ----------
 def create_token(user_id: str) -> str:
     now = int(time.time())

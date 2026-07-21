@@ -8,30 +8,32 @@ import FeaturesSection from "./components/FeaturesSection";
 import PricingSection from "./components/PricingSection";
 import FAQSection from "./components/FAQSection";
 import ContactSection from "./components/ContactSection";
-import DownloadHistory, { addHistoryItem } from "./components/DownloadHistory";
+import {
+  saveParseRecord,
+  updateParseArtifacts,
+  updateParseMetadata,
+} from "./services/parseHistory";
 import UpgradeModal from "./components/UpgradeModal";
 import MembershipOrderModal from "./components/MembershipOrderModal";
 import Footer from "./components/Footer";
 import AuthModal from "./components/AuthModal";
-import Background3D from "./components/Background3D";
+import ScrollExperience from "./components/ScrollExperience";
+import ProfilePage from "./components/ProfilePage";
 import useQuota from "./hooks/useQuota";
 
-const THEME_STORAGE_KEY = "site_theme_pop_v1";
-
 export default function App() {
+  const [page, setPage] = useState(() =>
+    window.location.pathname === "/profile" ? "profile" : "home",
+  );
   const [videoData, setVideoData] = useState(null);
+  const [activeHistoryRecord, setActiveHistoryRecord] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [historyKey, setHistoryKey] = useState(0);
   const [authOpen, setAuthOpen] = useState(false);
   const [user, setUser] = useState(null);
-  const [theme, setTheme] = useState(() => {
-    return localStorage.getItem(THEME_STORAGE_KEY) || "cinematic";
-  });
 
   const {
     quota,
-    fetchQuota,
     checkQuota,
     consumeQuota,
     showUpgrade,
@@ -52,6 +54,23 @@ export default function App() {
   const membershipUser = user ? { ...user, plan: currentPlan } : null;
 
   useEffect(() => {
+    const handlePopState = () => {
+      setPage(window.location.pathname === "/profile" ? "profile" : "home");
+      window.scrollTo({ top: 0, behavior: "auto" });
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    document.title =
+      page === "profile"
+        ? "个人中心 - 万能视频下载"
+        : "万能视频在线下载 - 无水印视频解析工具";
+  }, [page]);
+
+  useEffect(() => {
     const token = localStorage.getItem("auth_token");
     const saved = localStorage.getItem("auth_user");
     if (token && saved) {
@@ -59,10 +78,10 @@ export default function App() {
         const userData = JSON.parse(saved);
         setUser(userData);
         fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
-          .then((r) => r.json())
-          .then((d) => {
-            if (d.success) {
-              const updated = { ...userData, ...d.user };
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.success) {
+              const updated = { ...userData, ...data.user };
               setUser(updated);
               localStorage.setItem("auth_user", JSON.stringify(updated));
             } else {
@@ -76,16 +95,6 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme]);
-
-  const toggleTheme = () => {
-    setTheme((current) =>
-      current === "cinematic" ? "light" : "cinematic",
-    );
-  };
-
   const handleLogin = (userData, token) => {
     setUser(userData);
     localStorage.setItem("auth_token", token);
@@ -98,19 +107,47 @@ export default function App() {
     setUser(null);
   };
 
-  const handleAnalyze = async (url) => {
+  const navigateTo = useCallback((nextPage, { replace = false } = {}) => {
+    const path = nextPage === "profile" ? "/profile" : "/";
+    const method = replace ? "replaceState" : "pushState";
+    window.history[method]({}, "", path);
+    setPage(nextPage);
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, []);
+
+  const handleAnalyze = useCallback(async (url, resumeRecord = null) => {
     setIsLoading(true);
     setError("");
     setVideoData(null);
+    setActiveHistoryRecord(null);
     try {
-      const res = await fetch("/api/info", {
+      const token = localStorage.getItem("auth_token");
+      const response = await fetch("/api/info", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ url }),
       });
-      const data = await res.json();
+      const data = await response.json();
       if (data.success) {
-        setVideoData(data.data);
+        const cachedArtifacts = resumeRecord
+          ? {
+              subtitles: resumeRecord.subtitles || "",
+              segments: resumeRecord.segments || [],
+              language: resumeRecord.language || "",
+              subtitle_type: resumeRecord.subtitle_type || "",
+              summary_text: resumeRecord.summary_text || "",
+              mindmap_text: resumeRecord.mindmap_text || "",
+            }
+          : {};
+        const record = await saveParseRecord(data.data, cachedArtifacts, user);
+        setActiveHistoryRecord(record);
+        setVideoData({
+          ...data.data,
+          history_record_key: record.record_key,
+        });
       } else {
         setError(data.detail || "获取视频信息失败");
       }
@@ -119,43 +156,101 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [user]);
 
-  const handleDownloadComplete = useCallback((data, filename) => {
-    addHistoryItem(data, filename);
-    setHistoryKey((k) => k + 1);
-  }, []);
+  const handleDownloadComplete = useCallback(
+    async (data, filename) => {
+      const recordKey =
+        data.history_record_key || activeHistoryRecord?.record_key;
+      if (!recordKey) return;
+      const updated = await updateParseMetadata(
+        recordKey,
+        {
+          filename,
+          downloaded_at: Date.now(),
+        },
+        user,
+      );
+      if (updated) setActiveHistoryRecord(updated);
+    },
+    [activeHistoryRecord, user],
+  );
 
-  const handleReDownload = useCallback((item) => {
-    if (item.webpage_url) {
-      handleAnalyze(item.webpage_url);
-    }
-  }, []);
+  const handleContinueHistory = useCallback(
+    (item) => {
+      if (!item.webpage_url) return;
+
+      navigateTo("home");
+      window.setTimeout(() => {
+        document.getElementById("download-workspace")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+        handleAnalyze(item.webpage_url, item);
+      }, 80);
+    },
+    [handleAnalyze, navigateTo],
+  );
+
+  const handleArtifactsChange = useCallback(
+    async (artifacts) => {
+      const recordKey = activeHistoryRecord?.record_key;
+      if (!recordKey) return;
+      await updateParseArtifacts(recordKey, artifacts, user);
+    },
+    [activeHistoryRecord, user],
+  );
+
+  if (page === "profile") {
+    return (
+      <div className="site-shell min-h-screen">
+        <ProfilePage
+          user={membershipUser}
+          quota={quota}
+          onBackHome={() => navigateTo("home")}
+          onAuthClick={() => setAuthOpen(true)}
+          onLogout={handleLogout}
+          onContinueHistory={handleContinueHistory}
+        />
+        <AuthModal
+          isOpen={authOpen}
+          onClose={() => setAuthOpen(false)}
+          onLogin={handleLogin}
+        />
+      </div>
+    );
+  }
 
   return (
-    <div
-      className={`min-h-screen flex flex-col relative ${
-        theme === "cinematic" ? "theme-cinematic" : "theme-light"
-      }`}
-    >
-      <Background3D />
-      <Navbar
-        user={user}
-        quota={quota}
-        onAuthClick={() => setAuthOpen(true)}
-        onLogout={handleLogout}
-        theme={theme}
-        onThemeToggle={toggleTheme}
-      />
+    <div className="site-shell min-h-screen">
+      <ScrollExperience />
+      <div id="home" className="cinematic-hero">
+        <Navbar
+          user={user}
+          quota={quota}
+          onAuthClick={() => setAuthOpen(true)}
+          onLogout={handleLogout}
+          onOpenProfile={() => navigateTo("profile")}
+        />
+        <HeroSection />
+      </div>
+
       <AuthModal
         isOpen={authOpen}
         onClose={() => setAuthOpen(false)}
         onLogin={handleLogin}
       />
-      <main className="flex-1" aria-label="主要内容">
-        <div className="top-scene">
-          <HeroSection theme={theme} />
-          <div className="relative z-10 max-w-7xl mx-auto px-4 pt-3 md:pt-4 pb-12">
+
+      <main className="cinematic-content" aria-label="主要内容">
+        <section id="download-workspace" className="workspace-stage">
+          <div className="mx-auto max-w-5xl px-4 py-24 sm:px-6 md:py-32">
+            <header className="section-heading mb-12 text-center">
+              <h2 className="workspace-title">带来链接，留住此刻。</h2>
+              <p className="mx-auto mt-5 max-w-2xl text-sm leading-7 text-dark-500 sm:text-base">
+                粘贴任意支持平台的视频链接，解析高清画质、音频与字幕，把灵感安静地保存下来。
+              </p>
+            </header>
+
             <VideoInput
               onAnalyze={handleAnalyze}
               onCheckQuota={checkQuota}
@@ -165,20 +260,23 @@ export default function App() {
               onAuthClick={() => setAuthOpen(true)}
               onUpgradeClick={openUpgrade}
             />
-            {error && (
-              <div className="mt-4 p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 text-sm">
+
+            {error ? (
+              <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-600">
                 {error}
               </div>
-            )}
-            {isLoading && (
+            ) : null}
+
+            {isLoading ? (
               <div className="mt-8 text-center">
-                <div className="inline-block w-8 h-8 border-2 border-primary-200 border-t-primary-600 rounded-full animate-spin"></div>
-                <p className="mt-3 text-dark-400 text-sm">正在解析视频信息...</p>
+                <div className="inline-block size-8 animate-spin rounded-full border-2 border-primary-200 border-t-primary-600" />
+                <p className="mt-3 text-sm text-dark-400">正在解析视频信息...</p>
               </div>
-            )}
-            {videoData && (
-              <div className="mt-8 grid grid-cols-1 lg:grid-cols-[minmax(360px,460px)_minmax(0,1fr)] items-start gap-6 lg:gap-7">
-                <div className="min-w-0 space-y-5">
+            ) : null}
+
+            {videoData ? (
+              <div className="mt-8 grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(360px,460px)_minmax(0,1fr)] lg:gap-7">
+                <div className="min-w-0">
                   <VideoInfo
                     data={videoData}
                     user={user}
@@ -198,13 +296,15 @@ export default function App() {
                     checkQuota={checkQuota}
                     consumeQuota={consumeQuota}
                     openUpgrade={openUpgrade}
+                    initialArtifacts={activeHistoryRecord}
+                    onArtifactsChange={handleArtifactsChange}
                   />
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
-          <DownloadHistory key={historyKey} onReDownload={handleReDownload} />
-        </div>
+
+        </section>
 
         <FeaturesSection />
         <PricingSection
@@ -217,6 +317,7 @@ export default function App() {
         <FAQSection />
         <ContactSection />
       </main>
+
       <Footer />
 
       <UpgradeModal

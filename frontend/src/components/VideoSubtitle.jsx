@@ -161,6 +161,8 @@ export default function VideoSubtitle({
   checkQuota,
   consumeQuota,
   openUpgrade,
+  initialArtifacts,
+  onArtifactsChange,
 }) {
   const bvid = extractBvid(originalUrl);
   const isBili = isBilibiliUrl(originalUrl);
@@ -199,6 +201,7 @@ export default function VideoSubtitle({
   const [mindmapData, setMindmapData] = useState("");
   const [mindmapState, setMindmapState] = useState("idle"); // idle|loading|done|error
   const [mindmapError, setMindmapError] = useState("");
+  const summaryTextRef = useRef("");
 
   // ── 播放器引用 ──
   const videoRef = useRef(null);
@@ -207,26 +210,48 @@ export default function VideoSubtitle({
   const itemRefs = useRef({});
   const abortRef = useRef(null);
 
+  const persistArtifacts = useCallback(
+    (artifacts) => {
+      if (!onArtifactsChange) return;
+      Promise.resolve(onArtifactsChange(artifacts)).catch(() => {});
+    },
+    [onArtifactsChange],
+  );
+
   /* ──── 更换视频 URL → 清空所有缓存 ──── */
   useEffect(() => {
-    setVideoData(null);
-    setParseState("idle");
+    const restoredSubtitles = initialArtifacts?.subtitles || "";
+    const restoredSegments = Array.isArray(initialArtifacts?.segments)
+      ? initialArtifacts.segments
+      : [];
+    const restoredSummary = initialArtifacts?.summary_text || "";
+    const restoredMindmap = initialArtifacts?.mindmap_text || "";
+    const restoredTitle = initialArtifacts?.title || "";
+
+    setVideoData(
+      restoredSubtitles
+        ? { title: restoredTitle, subtitles: restoredSubtitles }
+        : null,
+    );
+    setParseState(restoredSubtitles || restoredSegments.length ? "done" : "idle");
     setParseMessage("");
     parsePromiseRef.current = null;
-    subtitlesCacheRef.current = "";
-    titleCacheRef.current = "";
-    hasParsedRef.current = false;
-    setState("idle");
-    setSegments([]);
-    setExtractedSubtitles("");
+    subtitlesCacheRef.current = restoredSubtitles;
+    titleCacheRef.current = restoredTitle;
+    hasParsedRef.current = Boolean(restoredSubtitles || restoredSegments.length);
+    setState(restoredSegments.length ? "done" : "idle");
+    setSegments(restoredSegments);
+    setLanguage(initialArtifacts?.language || "");
+    setExtractedSubtitles(restoredSubtitles);
     setError("");
-    setSummaryState("idle");
-    setSummaryText("");
+    setSummaryState(restoredSummary ? "done" : "idle");
+    setSummaryText(restoredSummary);
+    summaryTextRef.current = restoredSummary;
     setSummaryError("");
-    setMindmapState("idle");
-    setMindmapData("");
+    setMindmapState(restoredMindmap ? "done" : "idle");
+    setMindmapData(restoredMindmap);
     setMindmapError("");
-  }, [originalUrl]);
+  }, [originalUrl, initialArtifacts]);
 
   /* ──── 核心保障函数：确保视频字幕已解析并缓存 ──── */
   const ensureVideoData = useCallback(async () => {
@@ -267,6 +292,12 @@ export default function VideoSubtitle({
           setLanguage(data.language || "");
           setState("done");
         }
+        persistArtifacts({
+          subtitles: data.subtitles || "",
+          segments: data.segments || [],
+          language: data.language || "",
+          subtitle_type: data.subtitle_type || "",
+        });
         setParseState("done");
       } catch (err) {
         setParseState("error");
@@ -278,7 +309,7 @@ export default function VideoSubtitle({
     })();
 
     await parsePromiseRef.current;
-  }, [videoData, originalUrl]);
+  }, [videoData, originalUrl, persistArtifacts]);
 
   // ── 双向同步 Hook ──
   const sync = useVideoSync(segments);
@@ -401,6 +432,12 @@ export default function VideoSubtitle({
                       subtitlesCacheRef.current = cachedPlain;
                       setVideoData({ title: titleCacheRef.current, subtitles: cachedPlain });
                       setParseState("done");
+                      persistArtifacts({
+                        subtitles: cachedPlain,
+                        segments: d.segments || [],
+                        language: d.language || "",
+                        subtitle_type: d.subtitle_type || "existing",
+                      });
                       break;
                     }
                     case "done": {
@@ -416,6 +453,12 @@ export default function VideoSubtitle({
                       subtitlesCacheRef.current = plainText;
                       setVideoData({ title: titleCacheRef.current, subtitles: plainText });
                       setParseState("done");
+                      persistArtifacts({
+                        subtitles: plainText,
+                        segments: d.segments || [],
+                        language: d.language || "",
+                        subtitle_type: d.subtitle_type || "transcribed",
+                      });
                       break;
                     }
                     case "error": {
@@ -439,7 +482,7 @@ export default function VideoSubtitle({
           setError(`网络错误: ${err.message}`);
         }
       });
-  }, [originalUrl, prompt]);
+  }, [originalUrl, prompt, persistArtifacts]);
 
   /* ──── AI 总结（复用 ensureVideoData 缓存）──── */
   const handleSummarize = useCallback(async () => {
@@ -467,6 +510,7 @@ export default function VideoSubtitle({
     const title = titleCacheRef.current || videoData?.title || "";
     setSummaryState("summarizing");
     setSummaryText("");
+    summaryTextRef.current = "";
     setSummaryError("");
     const ctrl = new AbortController();
     const token = localStorage.getItem("auth_token");
@@ -498,6 +542,9 @@ export default function VideoSubtitle({
             .then(({ done, value }) => {
               if (done) {
                 setSummaryState("done");
+                if (summaryTextRef.current) {
+                  persistArtifacts({ summary_text: summaryTextRef.current });
+                }
                 // ── 总结成功后刷新额度 ──
                 if (consumeQuota) consumeQuota();
                 return;
@@ -508,8 +555,10 @@ export default function VideoSubtitle({
                 buf = "";
                 try {
                   const d = JSON.parse(line.slice(6));
-                  if (d.status === "streaming")
-                    setSummaryText((p) => p + d.content);
+                  if (d.status === "streaming") {
+                    summaryTextRef.current += d.content;
+                    setSummaryText(summaryTextRef.current);
+                  }
                   else if (d.status === "done") setSummaryState("done");
                   else if (d.status === "error") {
                     setSummaryState("error");
@@ -537,6 +586,7 @@ export default function VideoSubtitle({
     checkQuota,
     consumeQuota,
     openUpgrade,
+    persistArtifacts,
   ]);
 
   /* ──── 思维导图（复用 ensureVideoData 缓存）──── */
@@ -591,6 +641,7 @@ export default function VideoSubtitle({
         if (data.success) {
           setMindmapData(data.data.markdown);
           setMindmapState("done");
+          persistArtifacts({ mindmap_text: data.data.markdown });
           // ── 生成成功后刷新额度 ──
           if (consumeQuota) consumeQuota();
         } else {
@@ -609,6 +660,7 @@ export default function VideoSubtitle({
     checkQuota,
     consumeQuota,
     openUpgrade,
+    persistArtifacts,
   ]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -636,7 +688,7 @@ export default function VideoSubtitle({
         />
 
         {/* Tab 内容 */}
-        <div className="max-h-[460px] overflow-y-auto">
+        <div className="cinematic-scrollbar max-h-[460px] overflow-y-auto">
           {activeTab === "summary" && (
             <div className="p-5">
               {summaryState === "idle" && parseState === "loading" ? (
@@ -740,7 +792,7 @@ export default function VideoSubtitle({
               {(summaryState === "streaming" || summaryState === "done") && (
                 <div>
                   <div
-                    className="prose prose-sm max-w-none bg-dark-50 rounded-xl p-4 max-h-80 overflow-y-auto"
+                    className="cinematic-scrollbar prose prose-sm max-w-none bg-dark-50 rounded-xl p-4 max-h-80 overflow-y-auto"
                     dangerouslySetInnerHTML={{
                       __html:
                         marked.parse(summaryText || "") +
@@ -922,7 +974,10 @@ export default function VideoSubtitle({
           {activeTab === "subtitles" &&
             (segments.length > 0 ? (
               <>
-                <div ref={listRef} className="max-h-[400px] overflow-y-auto">
+                <div
+                  ref={listRef}
+                  className="cinematic-scrollbar max-h-[400px] overflow-y-auto"
+                >
                   {segments.map((seg, idx) => (
                     <button
                       key={idx}
@@ -994,7 +1049,7 @@ export default function VideoSubtitle({
               </>
             ) : extractedSubtitles ? (
               <div className="p-4">
-                <div className="bg-dark-50 rounded-xl p-4 text-sm text-dark-800 leading-relaxed whitespace-pre-wrap max-h-80 overflow-y-auto">
+                <div className="cinematic-scrollbar bg-dark-50 rounded-xl p-4 text-sm text-dark-800 leading-relaxed whitespace-pre-wrap max-h-80 overflow-y-auto">
                   {extractedSubtitles}
                 </div>
                 <div className="px-4 py-3 flex items-center justify-between text-xs text-dark-400">

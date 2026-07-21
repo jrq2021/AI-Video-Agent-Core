@@ -150,94 +150,76 @@ export default function PricingSection({
   return (
     <section
       id="pricing"
-      className="py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto"
+      className="cinematic-section pricing-section"
       aria-label="会员套餐"
     >
-      {/* 标题区 */}
-      <div className="text-center mb-16">
-        <h2 className="text-4xl sm:text-5xl font-extrabold text-dark-900 tracking-tight">
-          选择适合你的
-          <span className="bg-gradient-to-r from-primary-600 to-purple-600 bg-clip-text text-transparent">
-            {" "}
-            套餐
-          </span>
-        </h2>
-        <p className="mt-4 text-lg text-dark-500 max-w-2xl mx-auto">
-          从免费版开始，按使用强度升级；页面只展示已上线或明确标注未开放的权益。
-        </p>
-
-        {/* 月付/年付切换（仅影响 Pro） */}
-        <div className="mt-8 inline-flex items-center bg-dark-100 rounded-xl p-1 gap-1">
-          <button
-            onClick={() => setBillingCycle("monthly")}
-            className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-              billingCycle === "monthly"
-                ? "bg-white text-dark-900 shadow-sm"
-                : "text-dark-500 hover:text-dark-700"
-            }`}
-          >
-            月付
-          </button>
-          <button
-            onClick={() => setBillingCycle("yearly")}
-            className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
-              billingCycle === "yearly"
-                ? "bg-white text-dark-900 shadow-sm"
-                : "text-dark-500 hover:text-dark-700"
-            }`}
-          >
-            年付
-            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">
-              省 17%
-            </span>
-          </button>
-        </div>
-      </div>
-
-      <form
-        onSubmit={handleRedeemSubmit}
-        className="mx-auto mb-10 flex max-w-3xl flex-col gap-3 rounded-2xl border border-primary-100 bg-white/85 p-4 shadow-sm shadow-blue-500/5 backdrop-blur sm:flex-row sm:items-center"
-      >
-        <div className="min-w-0 flex-1">
-          <label className="mb-1 block text-sm font-semibold text-dark-800">
-            会员兑换码
-          </label>
-          <input
-            id="membership-code-input"
-            ref={couponInputRef}
-            value={couponCode}
-            onChange={(event) => {
-              setCouponCode(event.target.value.toUpperCase());
-              setRedeemStatus(null);
-            }}
-            placeholder="输入咸鱼购买后收到的券码"
-            className="w-full rounded-xl border border-dark-200 bg-white px-4 py-2.5 text-sm font-semibold tracking-wide text-dark-900 outline-none transition focus:border-primary-400 focus:ring-4 focus:ring-primary-50"
-          />
-          {redeemStatus && (
-            <p
-              className={`mt-2 text-xs font-medium ${
-                redeemStatus.type === "success"
-                  ? "text-green-600"
-                  : redeemStatus.type === "info"
-                    ? "text-primary-600"
-                    : "text-red-500"
-              }`}
-            >
-              {redeemStatus.message}
+      <div className="pricing-section__inner">
+        <div className="pricing-section__top">
+          <div className="section-heading pricing-section__heading">
+            <h2>
+              选择适合你的<em>节奏。</em>
+            </h2>
+            <p>
+              从免费版开始，按使用强度升级；已上线与未开放权益清晰标注。
             </p>
-          )}
-        </div>
-        <button
-          type="submit"
-          disabled={isRedeeming}
-          className="shrink-0 rounded-xl bg-dark-900 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-dark-900/10 transition hover:bg-dark-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isRedeeming ? "兑换中..." : "立即兑换"}
-        </button>
-      </form>
+          </div>
 
-      {/* 三栏卡片 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+          <div className="pricing-section__tools">
+            <div className="billing-toggle" role="group" aria-label="计费周期">
+              <button
+                type="button"
+                onClick={() => setBillingCycle("monthly")}
+                className={billingCycle === "monthly" ? "is-active" : ""}
+              >
+                月付
+              </button>
+              <button
+                type="button"
+                onClick={() => setBillingCycle("yearly")}
+                className={billingCycle === "yearly" ? "is-active" : ""}
+              >
+                年付
+                <span className="billing-save">省 17%</span>
+              </button>
+            </div>
+
+            <form
+              onSubmit={handleRedeemSubmit}
+              className="coupon-panel pricing-coupon"
+            >
+              <div className="pricing-coupon__field">
+                <label htmlFor="membership-code-input">会员兑换码</label>
+                <input
+                  id="membership-code-input"
+                  ref={couponInputRef}
+                  value={couponCode}
+                  onChange={(event) => {
+                    setCouponCode(event.target.value.toUpperCase());
+                    setRedeemStatus(null);
+                  }}
+                  placeholder="输入咸鱼购买后收到的券码"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isRedeeming}
+                className="liquid-glass action-glass pricing-coupon__button"
+              >
+                {isRedeeming ? "兑换中..." : "立即兑换"}
+              </button>
+              {redeemStatus && (
+                <p
+                  className={`pricing-coupon__status is-${redeemStatus.type}`}
+                  role="status"
+                >
+                  {redeemStatus.message}
+                </p>
+              )}
+            </form>
+          </div>
+        </div>
+
+        <div className="pricing-grid">
         {PLANS.map((plan) => {
           const isActive = isCurrentPlan(plan.id);
           const ctaText = plan.cta;
@@ -264,21 +246,19 @@ export default function PricingSection({
           return (
             <div
               key={plan.id}
-              className={`relative rounded-2xl border-2 p-8 transition-all duration-300 hover:shadow-xl ${
-                plan.highlight
-                  ? "border-primary-500 shadow-lg shadow-primary-500/10 scale-[1.02] bg-white"
-                  : "border-dark-200 bg-white hover:border-primary-300"
-              } ${isActive ? "ring-2 ring-primary-300 ring-offset-2" : ""}`}
+              className={`pricing-card pricing-plan-card ${
+                plan.highlight ? "is-featured" : ""
+              } ${plan.badge ? "has-badge" : ""} ${isActive ? "is-active" : ""}`}
             >
               {/* 推荐标签 */}
               {plan.badge && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                <div className="pricing-plan-card__badge">
                   <span
-                    className={`px-4 py-1 rounded-full text-xs font-bold tracking-wide uppercase ${
+                    className={
                       plan.highlight
-                        ? "bg-primary-600 text-white shadow-md shadow-primary-600/30"
-                        : "bg-purple-600 text-white shadow-md shadow-purple-600/30"
-                    }`}
+                        ? "is-primary"
+                        : "is-purple"
+                    }
                   >
                     {plan.badge}
                   </span>
@@ -287,48 +267,50 @@ export default function PricingSection({
 
               {/* 当前套餐标签 */}
               {isActive && (
-                <div className="absolute top-4 right-4">
-                  <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full">
+                <div className="pricing-plan-card__current">
+                  <span>
                     当前套餐
                   </span>
                 </div>
               )}
 
-              {/* 套餐名称 */}
-              <div className="mb-6">
-                <h3 className="text-xl font-bold text-dark-900">{plan.name}</h3>
-                <p className="text-sm text-dark-400 mt-1">{plan.desc}</p>
+              <div className="pricing-plan-card__heading">
+                <div>
+                  <h3>{plan.name}</h3>
+                  <p>{plan.desc}</p>
+                </div>
+                <span className="pricing-plan-card__en">{plan.nameEn}</span>
               </div>
 
-              {/* 价格 */}
-              <div className="mb-6">
-                <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-extrabold text-dark-900">
+              <div className="pricing-plan-card__price">
+                <div>
+                  <span>
                     {priceDisplay}
                   </span>
                   {periodLabel && (
-                    <span className="text-dark-400 text-sm">{periodLabel}</span>
+                    <small>{periodLabel}</small>
                   )}
                 </div>
-                {/* 年付优惠提示 */}
                 {plan.id === "pro" && billingCycle === "yearly" && (
-                  <p className="text-sm text-green-600 mt-1">
+                  <p>
                     约 ¥8.3/月，比月付省 ¥19.8
                   </p>
                 )}
               </div>
 
-              {/* 权益列表 */}
-              <ul className="space-y-3 mb-8">
+              <ul className="pricing-plan-card__features">
                 {plan.features.map((feature, idx) => (
-                  <li key={idx} className="flex items-start gap-3">
+                  <li
+                    key={idx}
+                    className={feature.included ? "" : "is-disabled"}
+                  >
                     {feature.included ? (
                       <svg
-                        className={`w-5 h-5 mt-0.5 flex-shrink-0 ${
+                        className={
                           feature.highlight
-                            ? "text-primary-600"
-                            : "text-green-500"
-                        }`}
+                            ? "is-highlight"
+                            : ""
+                        }
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
@@ -342,7 +324,6 @@ export default function PricingSection({
                       </svg>
                     ) : (
                       <svg
-                        className="w-5 h-5 mt-0.5 flex-shrink-0 text-dark-300"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
@@ -356,13 +337,7 @@ export default function PricingSection({
                       </svg>
                     )}
                     <span
-                      className={`text-sm ${
-                        feature.included
-                          ? feature.highlight
-                            ? "text-dark-900 font-semibold"
-                            : "text-dark-600"
-                          : "text-dark-400 line-through"
-                      }`}
+                      className={feature.highlight ? "is-highlight" : ""}
                     >
                       {feature.text}
                     </span>
@@ -370,8 +345,8 @@ export default function PricingSection({
                 ))}
               </ul>
 
-              {/* 行动按钮 */}
               <button
+                type="button"
                 onClick={() => {
                   if (!isActive) {
                     if (plan.id === "free") {
@@ -382,13 +357,9 @@ export default function PricingSection({
                   }
                 }}
                 disabled={isActive || (plan.id === "free" && isLoading)}
-                className={`w-full py-3 rounded-xl text-sm font-semibold transition-all duration-200 ${
-                  isActive
-                    ? "bg-dark-100 text-dark-400 cursor-not-allowed"
-                    : plan.highlight
-                      ? "bg-primary-600 text-white hover:bg-primary-700 shadow-lg shadow-primary-600/30 active:scale-[0.98]"
-                      : "bg-dark-900 text-white hover:bg-dark-800 shadow-lg shadow-dark-900/10 active:scale-[0.98]"
-                } disabled:opacity-60`}
+                className={`liquid-glass action-glass pricing-plan-card__button ${
+                  isActive ? "cursor-not-allowed opacity-45" : ""
+                }`}
               >
                 {isActive
                   ? "当前套餐"
@@ -399,16 +370,13 @@ export default function PricingSection({
             </div>
           );
         })}
-      </div>
+        </div>
 
-      {/* 底部说明 */}
-      <p className="text-center text-sm text-dark-400 mt-10">
-        当前会员通过兑换码开通；价格用于咸鱼卡券售卖和额度展示。
-        <br />
-        已上线权益以页面勾选项为准；购买后使用卖家发放的会员码兑换。
-        {/* 保持二行说明，避免套餐底部视觉过空 */}
-        <span className="sr-only">套餐功能说明</span>
-      </p>
+        <p className="pricing-section__note">
+          当前会员通过兑换码开通，已上线权益以勾选项为准。
+          <span className="sr-only">套餐功能说明</span>
+        </p>
+      </div>
     </section>
   );
 }

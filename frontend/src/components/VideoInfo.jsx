@@ -1,6 +1,12 @@
 import { useState } from "react";
 import DownloadProgress from "./DownloadProgress";
 import VideoSubtitle from "./VideoSubtitle";
+import {
+  isFinalDownloadEvent,
+  isIntermediateDownloadEvent,
+  mergeDownloadProgress,
+} from "../services/downloadProgress";
+import { getFormatHeight, getFormatLabel } from "../services/videoFormats";
 
 function formatDuration(seconds) {
   if (!seconds) return "未知";
@@ -51,6 +57,7 @@ export default function VideoInfo({
   const [downloadState, setDownloadState] = useState(null); // null | 'downloading' | 'completed' | 'error'
   const [progress, setProgress] = useState(null);
   const [downloadFilename, setDownloadFilename] = useState("");
+  const [autoDownloadStarted, setAutoDownloadStarted] = useState(false);
 
   // 筛选可用格式
   const availableFormats = data.formats
@@ -71,8 +78,7 @@ export default function VideoInfo({
       return acc;
     }, [])
     .sort((a, b) => {
-      const getHeight = (f) => parseInt(f.resolution?.replace("p", "") || "0");
-      return getHeight(b) - getHeight(a);
+      return getFormatHeight(b) - getFormatHeight(a);
     })
     .slice(0, 15);
 
@@ -103,6 +109,7 @@ export default function VideoInfo({
 
     setDownloadState("downloading");
     setDownloadFilename("");
+    setAutoDownloadStarted(false);
     setProgress({ percent: 0, speed: 0, eta: 0, downloaded: 0, total: 0 });
 
     try {
@@ -146,22 +153,20 @@ export default function VideoInfo({
             try {
               const eventData = JSON.parse(line.slice(6));
               if (eventData.status === "downloading") {
-                setProgress({
-                  percent: parseFloat(eventData.percent) || 0,
-                  speed: eventData.speed,
-                  eta: eventData.eta,
-                  downloaded: eventData.downloaded_bytes,
-                  total: eventData.total_bytes,
-                });
-              } else if (
-                eventData.status === "finished" ||
-                eventData.status === "completed"
-              ) {
+                setProgress((current) =>
+                  mergeDownloadProgress(current, eventData),
+                );
+              } else if (isIntermediateDownloadEvent(eventData)) {
+                setProgress((current) =>
+                  mergeDownloadProgress(current, eventData),
+                );
+              } else if (isFinalDownloadEvent(eventData)) {
                 const filename = eventData.filename || "";
                 setDownloadState("completed");
                 setProgress((current) => ({ ...(current || {}), percent: 100 }));
                 setDownloadFilename(filename);
                 triggerBrowserDownload(filename);
+                setAutoDownloadStarted(Boolean(filename));
                 // ── 下载成功后刷新额度 ──
                 if (consumeQuota) consumeQuota();
                 if (onDownloadComplete) {
@@ -281,11 +286,16 @@ export default function VideoInfo({
 
         {downloadState === "completed" && downloadFilename && (
           <div className="px-5 pb-4">
+            {autoDownloadStarted && (
+              <p className="mb-2 text-xs text-dark-400">
+                已自动开始保存到本地；如果浏览器没有弹出下载，可手动重新保存。
+              </p>
+            )}
             <button
               onClick={handleDownloadFile}
-              className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-indigo-500 text-white rounded-xl font-medium text-sm hover:from-blue-700 hover:to-indigo-600 active:scale-[0.98] transition-all shadow-lg shadow-blue-500/20"
+              className="inline-flex rounded-full border border-white/30 bg-white/10 px-4 py-2 text-sm font-medium text-white/90 shadow-lg shadow-black/10 backdrop-blur-xl transition-all hover:bg-white/18 active:scale-[0.98]"
             >
-              <span className="flex items-center justify-center gap-2">
+              <span className="flex items-center justify-center gap-2 text-[0px]">
                 <svg
                   className="w-4 h-4"
                   fill="none"
@@ -299,7 +309,7 @@ export default function VideoInfo({
                     d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"
                   />
                 </svg>
-                保存到本地
+                <span className="text-sm">重新保存到本地</span>
               </span>
             </button>
           </div>
@@ -344,9 +354,7 @@ export default function VideoInfo({
               const isSelected = selectedFormat === f.format_id;
               const isDownloading =
                 downloadState === "downloading" && isSelected;
-              const height = f.resolution
-                ? parseInt(f.resolution.replace("p", ""))
-                : 0;
+              const formatLabel = getFormatLabel(f);
               const sizeStr = formatSize(f.filesize || f.filesize_approx || 0);
               const hasAudio =
                 f.has_audio === true ||
@@ -420,7 +428,7 @@ export default function VideoInfo({
                       isSelected ? "text-primary-700" : "text-dark-700"
                     }`}
                   >
-                    {height ? `${height}p` : f.format_note || f.ext}
+                    {formatLabel}
                   </span>
                   <span className="text-xs text-dark-400 mt-0.5">
                     {f.ext?.toUpperCase()}

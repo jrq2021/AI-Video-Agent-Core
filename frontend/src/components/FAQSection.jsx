@@ -31,31 +31,26 @@ export default function FAQSection() {
   ];
 
   return (
-    <section id="faq" className="py-20 bg-white">
-      <div className="max-w-3xl mx-auto px-4">
-        <div className="text-center mb-12">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-amber-50 border border-amber-100 rounded-full mb-4">
-            <span className="text-xs font-semibold text-amber-700">
-              疑问解答
-            </span>
-          </div>
-          <h2 className="text-3xl md:text-4xl font-extrabold text-dark-900 tracking-tight">
-            常见问题
-          </h2>
-          <p className="mt-3 text-dark-400">关于视频下载的常见疑问，都在这里</p>
+    <section id="faq" className="cinematic-section faq-section">
+      <div className="mx-auto max-w-4xl px-4 sm:px-6">
+        <div className="section-heading mb-14 text-center">
+          <h2>问题有答案，过程不必喧闹。</h2>
+          <p className="mx-auto mt-5 max-w-xl">
+            关于平台、额度、保存位置与下载速度，常见疑问都整理在这里。
+          </p>
         </div>
 
-        <div className="space-y-3">
+        <div className="faq-list flex flex-col gap-3">
           {faqs.map((faq, i) => (
             <div
               key={i}
-              className="border border-dark-100 rounded-2xl overflow-hidden transition-all duration-200"
+              className={`faq-item ${openIndex === i ? "is-open" : ""}`}
             >
               <button
                 onClick={() => setOpenIndex(openIndex === i ? null : i)}
-                className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-dark-50/50 transition-colors"
+                className="flex w-full items-center justify-between px-6 py-5 text-left"
               >
-                <span className="font-semibold text-dark-800 text-sm pr-4">
+                <span className="pr-4 text-sm font-medium text-dark-800 sm:text-base">
                   {faq.q}
                 </span>
                 <svg
@@ -77,7 +72,7 @@ export default function FAQSection() {
                   openIndex === i ? "max-h-48 opacity-100" : "max-h-0 opacity-0"
                 }`}
               >
-                <p className="px-6 pb-4 text-sm text-dark-400 leading-relaxed">
+                <p className="px-6 pb-5 text-sm leading-7 text-dark-400">
                   {faq.a}
                 </p>
               </div>

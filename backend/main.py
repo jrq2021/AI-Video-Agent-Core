@@ -10,22 +10,29 @@ import urllib.request
 from decimal import Decimal
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from downloader import VideoDownloader
 from douyin import DouyinParser, is_douyin_url
 from bilibili import BilibiliParser, is_bilibili_url
 from summarizer import summarize_video, parse_video, summarize_text, generate_mindmap, extract_subtitles_segments
 from auth import create_user, authenticate_user, create_token, get_current_user, get_optional_user, get_user_by_id, init_db
+from email_verification import (
+    init_email_verification_db,
+    issue_email_code,
+    require_email_code,
+    reset_password_with_email_code,
+)
 from membership import (
     get_user_quota, check_and_consume_quota, get_all_plans, get_plan_config,
     create_order, mark_order_paid, QuotaInfo, init_membership_db,
     get_guest_quota, check_and_consume_guest_quota, get_order,
     update_order_gateway_data, redeem_membership_coupon,
 )
+from parse_history import init_parse_history_db, parse_history_store
 from hupijiao import (
     HUPIJIAO_APPID,
     HupijiaoConfigError,
@@ -40,7 +47,9 @@ from hupijiao import (
 async def lifespan(app: FastAPI):
     # 启动时初始化数据库
     init_db()
+    init_email_verification_db()
     init_membership_db()
+    init_parse_history_db()
     print("[启动] 数据库初始化完成")
     yield
     # 关闭时清理（可选）
@@ -83,6 +92,18 @@ class RegisterRequest(BaseModel):
     username: str
     email: str
     password: str
+    code: str
+
+
+class SendEmailCodeRequest(BaseModel):
+    email: str
+    purpose: str  # register / reset_password
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    code: str
+    password: str
 
 
 class SummarizeTextRequest(BaseModel):
@@ -97,6 +118,15 @@ class TranscribeRequest(BaseModel):
     prompt: str = ""
 
 
+class ParseHistoryUpsertRequest(BaseModel):
+    video: Dict[str, Any]
+    artifacts: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ParseHistoryArtifactsRequest(BaseModel):
+    artifacts: Dict[str, Any] = Field(default_factory=dict)
+
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "message": "万能视频下载器运行中"}
@@ -106,11 +136,33 @@ async def health():
 async def register(req: RegisterRequest):
     """注册新用户"""
     try:
+        require_email_code(req.email, "register", req.code)
         user = create_user(req.username, req.email, req.password)
         token = create_token(user["id"])
         return {"success": True, "user": user, "token": token}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/auth/send-code")
+async def send_auth_email_code(req: SendEmailCodeRequest, request: Request):
+    """发送注册 / 找回密码邮箱验证码。登录仍使用密码，不需要验证码。"""
+    ip = request.client.host if request.client else "127.0.0.1"
+    try:
+        result = issue_email_code(req.email, req.purpose, ip_address=ip)
+        response = {
+            "success": True,
+            "message": "验证码已发送，有效期 10 分钟",
+            "expires_in": result["expires_in"],
+            "cooldown": result["cooldown"],
+        }
+        if "debug_code" in result:
+            response["debug_code"] = result["debug_code"]
+        return response
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @app.post("/api/auth/login")
@@ -121,6 +173,17 @@ async def login(req: LoginRequest):
         raise HTTPException(status_code=401, detail="用户名/邮箱或密码错误")
     token = create_token(user["id"])
     return {"success": True, "user": user, "token": token}
+
+
+@app.post("/api/auth/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    """通过邮箱验证码重置密码，成功后直接返回登录态。"""
+    try:
+        user = reset_password_with_email_code(req.email, req.code, req.password)
+        token = create_token(user["id"])
+        return {"success": True, "user": user, "token": token}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/auth/me")
@@ -143,6 +206,69 @@ async def me(user: dict = Depends(get_current_user)):
 
 
 # ==================== 会员套餐 API ====================
+
+@app.get("/api/parse-history")
+async def list_parse_history(user: dict = Depends(get_current_user)):
+    return {
+        "success": True,
+        "records": parse_history_store.list_records(user["id"]),
+    }
+
+
+@app.get("/api/parse-history/{record_key}")
+async def get_parse_history_record(
+    record_key: str,
+    user: dict = Depends(get_current_user),
+):
+    try:
+        record = parse_history_store.get_record(user["id"], record_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not record:
+        raise HTTPException(status_code=404, detail="解析历史不存在")
+    return {"success": True, "record": record}
+
+
+@app.post("/api/parse-history")
+async def upsert_parse_history(
+    req: ParseHistoryUpsertRequest,
+    user: dict = Depends(get_current_user),
+):
+    try:
+        record = parse_history_store.upsert(
+            user["id"],
+            req.video,
+            req.artifacts,
+        )
+        return {"success": True, "record": record}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.patch("/api/parse-history/{record_key}")
+async def patch_parse_history(
+    record_key: str,
+    req: ParseHistoryArtifactsRequest,
+    user: dict = Depends(get_current_user),
+):
+    try:
+        record = parse_history_store.update_artifacts(
+            user["id"],
+            record_key,
+            req.artifacts,
+        )
+        return {"success": True, "record": record}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="解析历史不存在")
+
+
+@app.delete("/api/parse-history")
+async def clear_parse_history(user: dict = Depends(get_current_user)):
+    parse_history_store.clear_records(user["id"])
+    return {"success": True}
+
 
 @app.get("/api/membership/plans")
 async def get_plans():
@@ -523,7 +649,7 @@ async def download_video(req: DownloadRequest, request: Request, user: Optional[
                     "percent": round(percent, 1),
                 }
             elif d["status"] == "finished":
-                data = {"status": "finished", "filename": os.path.basename(d.get("filename", ""))}
+                data = {"status": "processing", "message": "正在整理文件…"}
             else:
                 data = {"status": d["status"]}
             progress_queue.put(data)  # 线程安全

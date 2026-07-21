@@ -1,19 +1,25 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  ChevronDown,
+  Crown,
+  LogOut,
+  Mail,
+  UserRound,
+} from "lucide-react";
+import { APP_VERSION, VERSION_CHANGELOG, VERSION_RELEASE_DATE } from "../version";
 
 const navItems = [
   { label: "首页", href: "#home" },
+  { label: "解析工作台", href: "#download-workspace" },
   { label: "功能特色", href: "#features" },
-  { label: "套餐定价", href: "#pricing" },
   { label: "常见问题", href: "#faq" },
   { label: "联系我们", href: "#contact" },
 ];
 
-// 会员等级样式映射
-const PLAN_STYLES = {
-  free: { bg: "bg-dark-100", text: "text-dark-600", label: "免费版" },
-  pro: { bg: "bg-primary-100", text: "text-primary-700", label: "Pro" },
-  ultra: { bg: "bg-purple-100", text: "text-purple-700", label: "Ultra" },
-  guest: { bg: "bg-dark-100", text: "text-dark-500", label: "游客" },
+const planLabels = {
+  free: "免费版",
+  pro: "专业版",
+  ultra: "旗舰版",
 };
 
 export default function Navbar({
@@ -21,260 +27,340 @@ export default function Navbar({
   quota,
   onAuthClick,
   onLogout,
-  theme = "cinematic",
-  onThemeToggle,
+  onOpenProfile,
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const isVivid = theme === "cinematic";
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [versionOpen, setVersionOpen] = useState(false);
+  const accountMenuRef = useRef(null);
+  const versionRef = useRef(null);
+  const currentPlan = quota?.plan || user?.plan || "free";
+  const planLabel = planLabels[currentPlan] || "免费版";
+  const avatarText = user?.username?.trim()?.slice(0, 1)?.toUpperCase() || "用";
 
-  const handleNavClick = (e, href) => {
-    e.preventDefault();
+  useEffect(() => {
+    if (!accountOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (!accountMenuRef.current?.contains(event.target)) {
+        setAccountOpen(false);
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setAccountOpen(false);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [accountOpen]);
+
+  useEffect(() => {
+    if (!user) setAccountOpen(false);
+  }, [user]);
+
+  useEffect(() => {
+    if (!versionOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (!versionRef.current?.contains(event.target)) {
+        setVersionOpen(false);
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setVersionOpen(false);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [versionOpen]);
+
+  const handleNavClick = (event, href) => {
+    event.preventDefault();
     setMobileOpen(false);
-    if (href === "#home") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      return;
-    }
-    const el = document.querySelector(href);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
+    setAccountOpen(false);
+    document.querySelector(href)?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+
+  const handleLogoutClick = () => {
+    setAccountOpen(false);
+    setMobileOpen(false);
+    onLogout();
   };
 
   return (
-    <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-dark-100/50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo */}
-          <a href="/" className="flex items-center gap-2.5 group">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-lg shadow-primary-500/30 group-hover:shadow-primary-500/50 transition-shadow">
-              <svg
-                className="w-5 h-5 text-white"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                />
-              </svg>
-            </div>
-            <span className="text-lg font-bold text-dark-900 tracking-tight">
-              万能视频下载
-            </span>
+    <header className="cinematic-navbar absolute inset-x-0 top-0 z-30">
+      <div className="cinematic-navbar__surface mx-4 mt-5 flex max-w-7xl items-center justify-between rounded-full px-5 py-4 sm:mx-8 sm:px-8 xl:mx-auto">
+        <div ref={versionRef} className="brand-version">
+          <a
+            href="#home"
+            onClick={(event) => {
+              setVersionOpen(false);
+              handleNavClick(event, "#home");
+            }}
+            className="hero-brand text-white"
+            aria-label="万能视频下载首页"
+          >
+            万能视频下载
           </a>
+          <button
+            type="button"
+            className="version-badge"
+            onClick={() => setVersionOpen((open) => !open)}
+            aria-haspopup="dialog"
+            aria-expanded={versionOpen}
+          >
+            {APP_VERSION}
+          </button>
 
-          {/* Desktop Nav */}
-          <nav className="hidden md:flex items-center gap-8">
+          {versionOpen ? (
+            <div className="version-popover" role="dialog" aria-label="版本更新内容">
+              <div className="version-popover__header">
+                <span>版本更新</span>
+                <strong>{APP_VERSION}</strong>
+              </div>
+              <p className="version-popover__date">{VERSION_RELEASE_DATE}</p>
+
+              {VERSION_CHANGELOG.map((group) => (
+                <section key={group.title} className="version-popover__section">
+                  <h3>{group.title}</h3>
+                  <ul>
+                    {group.items.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <nav className="hidden items-center gap-8 md:flex" aria-label="主导航">
+          {navItems.map((item, index) => (
+            <a
+              key={item.label}
+              href={item.href}
+              onClick={(event) => handleNavClick(event, item.href)}
+              className={`text-sm transition-colors ${
+                index === 0
+                  ? "text-white"
+                  : "text-white/60 hover:text-white"
+              }`}
+            >
+              {item.label}
+            </a>
+          ))}
+        </nav>
+
+        <div className="hidden items-center gap-3 md:flex">
+          {user ? (
+            <div ref={accountMenuRef} className="account-menu">
+              <button
+                type="button"
+                onClick={() => setAccountOpen((open) => !open)}
+                className="account-menu__trigger"
+                aria-haspopup="menu"
+                aria-expanded={accountOpen}
+              >
+                <span className="account-menu__avatar" aria-hidden="true">
+                  {avatarText}
+                </span>
+                <span className="account-menu__username">{user.username}</span>
+                <ChevronDown
+                  className={accountOpen ? "is-open" : ""}
+                  aria-hidden="true"
+                  strokeWidth={1.8}
+                />
+              </button>
+
+              {accountOpen ? (
+                <div className="account-menu__panel" role="menu">
+                  <div className="account-menu__identity">
+                    <span className="account-menu__avatar is-large" aria-hidden="true">
+                      {avatarText}
+                    </span>
+                    <div>
+                      <strong>{user.username}</strong>
+                      <span>
+                        <Mail aria-hidden="true" strokeWidth={1.7} />
+                        {user.email || "未绑定邮箱"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="account-menu__plan">
+                    <span>
+                      <Crown aria-hidden="true" strokeWidth={1.7} />
+                      当前方案
+                    </span>
+                    <strong>{planLabel}</strong>
+                  </div>
+
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="account-menu__action"
+                    onClick={() => {
+                      setAccountOpen(false);
+                      onOpenProfile?.();
+                    }}
+                  >
+                    <UserRound aria-hidden="true" strokeWidth={1.7} />
+                    查看个人中心
+                  </button>
+
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={handleLogoutClick}
+                    className="account-menu__logout"
+                  >
+                    <LogOut aria-hidden="true" strokeWidth={1.7} />
+                    退出登录
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={onAuthClick}
+              className="px-2 text-sm text-white/65 transition-colors hover:text-white"
+            >
+              登录
+            </button>
+          )}
+          <a
+            href="#download-workspace"
+            onClick={(event) =>
+              handleNavClick(event, "#download-workspace")
+            }
+            className="liquid-glass rounded-full px-6 py-2.5 text-sm text-white transition-transform duration-300 hover:scale-[1.03]"
+          >
+            开始解析
+          </a>
+        </div>
+
+        <button
+          type="button"
+          className="liquid-glass flex size-11 items-center justify-center rounded-full text-white md:hidden"
+          onClick={() => setMobileOpen((open) => !open)}
+          aria-expanded={mobileOpen}
+          aria-label={mobileOpen ? "关闭导航" : "打开导航"}
+        >
+          <svg
+            className="size-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            aria-hidden="true"
+          >
+            {mobileOpen ? (
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 18 18 6M6 6l12 12"
+              />
+            ) : (
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M4 7h16M4 12h16M4 17h16"
+              />
+            )}
+          </svg>
+        </button>
+      </div>
+
+      {mobileOpen ? (
+        <div className="mobile-nav-panel mx-4 rounded-3xl p-4 md:hidden">
+          <nav className="flex flex-col" aria-label="移动端导航">
             {navItems.map((item) => (
               <a
                 key={item.label}
                 href={item.href}
-                onClick={(e) => handleNavClick(e, item.href)}
-                className="text-sm text-dark-500 hover:text-primary-600 transition-colors font-medium"
+                onClick={(event) => handleNavClick(event, item.href)}
+                className="rounded-2xl px-4 py-3 text-sm text-white/70 transition-colors hover:bg-white/5 hover:text-white"
               >
                 {item.label}
               </a>
             ))}
           </nav>
 
-          {/* Right side */}
-          <div className="hidden md:flex items-center gap-3">
-            <button
-              type="button"
-              onClick={onThemeToggle}
-              className="theme-toggle"
-              aria-label={isVivid ? "切换到原版主题" : "切换到活力主题"}
-              title={isVivid ? "原版主题" : "活力主题"}
-            >
-              <span className="theme-toggle__icon" aria-hidden="true">
-                {isVivid ? (
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M12 4V2M12 22v-2M4.93 4.93 3.52 3.52M20.48 20.48l-1.41-1.41M4 12H2M22 12h-2M4.93 19.07l-1.41 1.41M20.48 3.52l-1.41 1.41M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M20.3 14.35A7.9 7.9 0 0 1 9.65 3.7 8.2 8.2 0 1 0 20.3 14.35Z"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )}
-              </span>
-              <span>{isVivid ? "原版" : "活力"}</span>
-            </button>
-
-            {user ? (
-              <>
-                {/* ── 会员等级徽章 + 额度 ── */}
-                {quota && (
-                  <div className="flex items-center gap-2 mr-1">
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                        (PLAN_STYLES[quota.plan] || PLAN_STYLES.free).bg
-                      } ${(PLAN_STYLES[quota.plan] || PLAN_STYLES.free).text}`}
-                    >
-                      {(PLAN_STYLES[quota.plan] || PLAN_STYLES.free).label}
-                    </span>
-                    <span className="text-xs text-dark-400">
-                      下载{" "}
-                      <span className="font-semibold text-dark-600">
-                        {quota.daily_downloads_used}/
-                        {quota.daily_downloads_limit}
-                      </span>
-                    </span>
-                  </div>
-                )}
-                <span className="text-sm text-dark-500">{user.username}</span>
-                <button
-                  onClick={onLogout}
-                  className="btn-secondary text-sm !px-4 !py-2"
-                >
-                  退出
-                </button>
-              </>
-            ) : (
-              <>
-                {/* ── 游客额度提示 ── */}
-                {quota && quota.is_guest && (
-                  <span className="text-xs text-dark-400 mr-1">
-                    今日剩余{" "}
-                    <span className="font-semibold text-dark-600">
-                      {Math.max(
-                        0,
-                        (quota.daily_downloads_limit || 1) -
-                          (quota.daily_downloads_used || 0),
-                      )}
-                    </span>{" "}
-                    次下载
-                  </span>
-                )}
-                <button
-                  onClick={onAuthClick}
-                  className="btn-secondary text-sm !px-4 !py-2"
-                >
-                  登录
-                </button>
-                <button
-                  onClick={onAuthClick}
-                  className="btn-primary text-sm !px-4 !py-2"
-                >
-                  免费试用
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* Mobile menu button */}
-          <button
-            className="md:hidden p-2 text-dark-500 hover:text-dark-700"
-            onClick={() => setMobileOpen(!mobileOpen)}
-          >
-            <svg
-              className="w-6 h-6"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={1.5}
-            >
-              {mobileOpen ? (
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              ) : (
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
-                />
-              )}
-            </svg>
-          </button>
-        </div>
-
-        {/* Mobile menu */}
-        {mobileOpen && (
-          <div className="md:hidden pb-4 border-t border-dark-100 pt-3 animate-fade-in-up">
-            {navItems.map((item) => (
-              <a
-                key={item.label}
-                href={item.href}
-                onClick={(e) => handleNavClick(e, item.href)}
-                className="block py-2.5 text-sm text-dark-500 hover:text-primary-600 font-medium"
-              >
-                {item.label}
-              </a>
-            ))}
-            <div className="flex gap-3 mt-3">
+          {user ? (
+            <div className="mobile-account-card">
+              <div className="account-menu__identity">
+                <span className="account-menu__avatar is-large" aria-hidden="true">
+                  {avatarText}
+                </span>
+                <div>
+                  <strong>{user.username}</strong>
+                  <span>{user.email || "未绑定邮箱"}</span>
+                </div>
+              </div>
+              <div className="account-menu__plan">
+                <span>当前方案</span>
+                <strong>{planLabel}</strong>
+              </div>
               <button
                 type="button"
-                onClick={onThemeToggle}
-                className="theme-toggle flex-1 justify-center"
-                aria-label={isVivid ? "切换到原版主题" : "切换到活力主题"}
+                onClick={() => {
+                  setMobileOpen(false);
+                  onOpenProfile?.();
+                }}
+                className="account-menu__action"
               >
-                <span className="theme-toggle__icon" aria-hidden="true">
-                  {isVivid ? (
-                    <svg viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M12 4V2M12 22v-2M4.93 4.93 3.52 3.52M20.48 20.48l-1.41-1.41M4 12H2M22 12h-2M4.93 19.07l-1.41 1.41M20.48 3.52l-1.41 1.41M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"
-                        stroke="currentColor"
-                        strokeWidth="1.7"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M20.3 14.35A7.9 7.9 0 0 1 9.65 3.7 8.2 8.2 0 1 0 20.3 14.35Z"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </span>
-                <span>{isVivid ? "原版" : "活力"}</span>
+                <UserRound aria-hidden="true" strokeWidth={1.7} />
+                查看个人中心
               </button>
-              {user ? (
-                <button
-                  onClick={onLogout}
-                  className="btn-secondary text-sm flex-1 !py-2"
-                >
-                  退出登录
-                </button>
-              ) : (
-                <>
-                  <button
-                    onClick={onAuthClick}
-                    className="btn-secondary text-sm flex-1 !py-2"
-                  >
-                    登录
-                  </button>
-                  <button
-                    onClick={onAuthClick}
-                    className="btn-primary text-sm flex-1 !py-2"
-                  >
-                    注册
-                  </button>
-                </>
-              )}
+              <button
+                type="button"
+                onClick={handleLogoutClick}
+                className="account-menu__logout"
+              >
+                <LogOut aria-hidden="true" strokeWidth={1.7} />
+                退出登录
+              </button>
             </div>
+          ) : null}
+
+          <div
+            className={`mt-3 grid gap-3 ${
+              user ? "grid-cols-1" : "grid-cols-2"
+            }`}
+          >
+            {!user ? (
+              <button
+                type="button"
+                onClick={onAuthClick}
+                className="rounded-full px-5 py-3 text-sm text-white/70"
+              >
+                登录
+              </button>
+            ) : null}
+            <a
+              href="#download-workspace"
+              onClick={(event) =>
+                handleNavClick(event, "#download-workspace")
+              }
+              className="liquid-glass rounded-full px-5 py-3 text-center text-sm text-white"
+            >
+              开始解析
+            </a>
           </div>
-        )}
-      </div>
+        </div>
+      ) : null}
     </header>
   );
 }

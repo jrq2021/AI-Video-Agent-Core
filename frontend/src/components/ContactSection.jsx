@@ -1,29 +1,19 @@
 export default function ContactSection() {
   return (
-    <section
-      id="contact"
-      className="py-20 bg-gradient-to-b from-dark-50/30 to-white"
-    >
-      <div className="max-w-4xl mx-auto px-4">
-        <div className="text-center mb-12">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-rose-50 border border-rose-100 rounded-full mb-4">
-            <span className="text-xs font-semibold text-rose-700">
-              联系我们
-            </span>
-          </div>
-          <h2 className="text-3xl md:text-4xl font-extrabold text-dark-900 tracking-tight">
-            有什么想说的？
-          </h2>
-          <p className="mt-3 text-dark-400">
+    <section id="contact" className="cinematic-section contact-section">
+      <div className="mx-auto max-w-5xl px-4 sm:px-6">
+        <div className="section-heading mb-14 text-center">
+          <h2>想法、问题与合作，都欢迎抵达。</h2>
+          <p className="mx-auto mt-5 max-w-xl">
             无论是建议、反馈还是合作，都欢迎联系
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          <div className="card p-6 text-center group hover:-translate-y-0.5 transition-all duration-300">
-            <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="contact-card group">
+            <div className="contact-card__icon">
               <svg
-                className="w-6 h-6 text-blue-600"
+                className="size-6"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -36,14 +26,14 @@ export default function ContactSection() {
                 />
               </svg>
             </div>
-            <h3 className="font-bold text-dark-800 mb-1">邮件联系</h3>
-            <p className="text-sm text-dark-400">support@videodl.com</p>
+            <h3>邮件联系</h3>
+            <p>support@videodl.com</p>
           </div>
 
-          <div className="card p-6 text-center group hover:-translate-y-0.5 transition-all duration-300">
-            <div className="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
+          <div className="contact-card group">
+            <div className="contact-card__icon">
               <svg
-                className="w-6 h-6 text-purple-600"
+                className="size-6"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -56,14 +46,14 @@ export default function ContactSection() {
                 />
               </svg>
             </div>
-            <h3 className="font-bold text-dark-800 mb-1">反馈建议</h3>
-            <p className="text-sm text-dark-400">GitHub Issues / 用户社区</p>
+            <h3>反馈建议</h3>
+            <p>GitHub Issues / 用户社区</p>
           </div>
 
-          <div className="card p-6 text-center group hover:-translate-y-0.5 transition-all duration-300">
-            <div className="w-12 h-12 bg-green-50 rounded-xl flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
+          <div className="contact-card group">
+            <div className="contact-card__icon">
               <svg
-                className="w-6 h-6 text-green-600"
+                className="size-6"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -76,20 +66,32 @@ export default function ContactSection() {
                 />
               </svg>
             </div>
-            <h3 className="font-bold text-dark-800 mb-1">商务合作</h3>
-            <p className="text-sm text-dark-400">business@videodl.com</p>
+            <h3>商务合作</h3>
+            <p>business@videodl.com</p>
           </div>
         </div>
 
-        {/* 免责声明 */}
-        <div className="mt-10 p-5 bg-amber-50 border border-amber-100 rounded-2xl">
+        <div className="legal-note mt-8 rounded-2xl p-5">
           <div className="flex gap-3">
-            <span className="text-amber-500 text-lg shrink-0">⚠️</span>
+            <svg
+              className="mt-0.5 size-5 shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
+              />
+            </svg>
             <div>
-              <h4 className="font-semibold text-amber-800 text-sm mb-1">
+              <h4 className="mb-1 text-sm font-medium">
                 免责声明
               </h4>
-              <p className="text-xs text-amber-600 leading-relaxed">
+              <p className="text-xs leading-relaxed">
                 下载视频时请遵守相关平台的服务条款和当地法律法规，请勿用于侵犯他人版权或商业盈利等非法用途。本站不对用户的下载行为承担任何法律责任。
               </p>
             </div>
