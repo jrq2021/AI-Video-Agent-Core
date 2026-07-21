@@ -8,9 +8,6 @@ from unittest.mock import patch
 import membership
 from parse_history import ParseHistoryStore
 
-warnings.filterwarnings("ignore", category=ResourceWarning)
-
-
 class BatchJobStoreTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()

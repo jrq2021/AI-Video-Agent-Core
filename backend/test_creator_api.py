@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import membership
@@ -31,11 +32,31 @@ class CreatorApiTest(unittest.TestCase):
         membership.DB_PATH = self.original_membership_db
         self.temp_dir.cleanup()
 
-    def test_translation_uses_record_cache_without_second_credit_charge(self):
+    def _load_main(self):
         import douyin
         with warnings.catch_warnings(), patch.object(douyin.DouyinParser, "_init_guest_cookie"):
             warnings.simplefilter("ignore", DeprecationWarning)
             import main
+        return main
+
+    def test_optional_quota_endpoint_includes_creator_limits(self):
+        main = self._load_main()
+        request = SimpleNamespace(
+            headers={"Authorization": "Bearer test-token"},
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+
+        with patch("auth.decode_token", return_value="owner"), patch(
+            "auth.get_user_by_id", return_value={"id": "owner"}
+        ):
+            response = asyncio.run(main.my_quota_optional(request))
+
+        self.assertEqual(response["quota"]["daily_batch_items_limit"], 10)
+        self.assertEqual(response["quota"]["daily_creator_credits_limit"], 10)
+        self.assertTrue(response["quota"]["can_batch_parse"])
+
+    def test_translation_uses_record_cache_without_second_credit_charge(self):
+        main = self._load_main()
 
         original_history = main.parse_history_store
         main.parse_history_store = self.history

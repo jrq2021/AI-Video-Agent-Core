@@ -14,6 +14,7 @@ import sqlite3
 import secrets
 from pathlib import Path
 from datetime import datetime, timedelta
+from contextlib import contextmanager
 from functools import wraps
 from typing import Optional
 
@@ -30,12 +31,20 @@ JWT_EXPIRE_HOURS = 72  # Token 有效期 3 天
 
 
 # ---------- 数据库 ----------
-def _get_db() -> sqlite3.Connection:
+@contextmanager
+def _get_db():
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db():

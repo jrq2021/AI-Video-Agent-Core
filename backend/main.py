@@ -228,17 +228,7 @@ async def me(user: dict = Depends(get_current_user)):
     """获取当前用户信息（含会员状态）"""
     quota = get_user_quota(user["id"])
     user["plan"] = quota.plan
-    user["quota"] = {
-        "daily_downloads_limit": quota.daily_downloads_limit,
-        "daily_summaries_limit": quota.daily_summaries_limit,
-        "daily_downloads_used": quota.daily_downloads_used,
-        "daily_summaries_used": quota.daily_summaries_used,
-        "can_batch_download": quota.can_batch_download,
-        "can_export_mindmap": quota.can_export_mindmap,
-        "max_quality": quota.max_quality,
-        "has_watermark": quota.has_watermark,
-        "is_expired": quota.is_expired,
-    }
+    user["quota"] = serialize_quota(quota)
     return {"success": True, "user": user}
 
 
@@ -444,23 +434,7 @@ async def get_plans():
 async def my_quota(user: dict = Depends(get_current_user)):
     """获取当前用户的额度信息"""
     quota = get_user_quota(user["id"])
-    return {
-        "success": True,
-        "quota": {
-            "plan": quota.plan,
-            "daily_downloads_limit": quota.daily_downloads_limit,
-            "daily_summaries_limit": quota.daily_summaries_limit,
-            "daily_downloads_used": quota.daily_downloads_used,
-            "daily_summaries_used": quota.daily_summaries_used,
-            "can_batch_download": quota.can_batch_download,
-            "batch_max_count": quota.batch_max_count,
-            "can_export_mindmap": quota.can_export_mindmap,
-            "max_quality": quota.max_quality,
-            "has_watermark": quota.has_watermark,
-            "is_expired": quota.is_expired,
-            "expires_at": quota.expires_at,
-        }
-    }
+    return {"success": True, "quota": serialize_quota(quota)}
 
 
 @app.get("/api/membership/my-quota")
@@ -480,24 +454,7 @@ async def my_quota_optional(request: Request):
                 user = get_user_by_id(user_id)
                 if user:
                     quota = get_user_quota(user["id"])
-                    return {
-                        "success": True,
-                        "quota": {
-                            "plan": quota.plan,
-                            "daily_downloads_limit": quota.daily_downloads_limit,
-                            "daily_summaries_limit": quota.daily_summaries_limit,
-                            "daily_downloads_used": quota.daily_downloads_used,
-                            "daily_summaries_used": quota.daily_summaries_used,
-                            "can_batch_download": quota.can_batch_download,
-                            "batch_max_count": quota.batch_max_count,
-                            "can_export_mindmap": quota.can_export_mindmap,
-                            "max_quality": quota.max_quality,
-                            "has_watermark": quota.has_watermark,
-                            "is_expired": quota.is_expired,
-                            "expires_at": quota.expires_at,
-                            "is_guest": False,
-                        }
-                    }
+                    return {"success": True, "quota": serialize_quota(quota)}
         except Exception:
             pass
 
