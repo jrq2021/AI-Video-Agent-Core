@@ -72,6 +72,26 @@ class EmailVerificationTest(unittest.TestCase):
 
         self.assertTrue(email_verification.require_email_code(email, "register", code))
 
+    def test_failed_delivery_does_not_start_email_cooldown(self):
+        email = "retry@example.com"
+
+        with patch.object(
+            email_verification,
+            "_send_email_code",
+            side_effect=RuntimeError("smtp unavailable"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "smtp unavailable"):
+                email_verification.issue_email_code(email, "register")
+
+        retry = email_verification.issue_email_code(
+            email,
+            "register",
+            code="123456",
+            deliver=False,
+        )
+
+        self.assertEqual(retry["email"], email)
+
 
 if __name__ == "__main__":
     unittest.main()

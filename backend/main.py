@@ -244,8 +244,8 @@ async def send_auth_email_code(req: SendEmailCodeRequest, request: Request):
             now,
         ):
             raise HTTPException(status_code=429, detail="验证码请求过于频繁，请稍后再试")
-        record_rate_limit_event("send_code", ip, now)
         result = issue_email_code(req.email, req.purpose, ip_address=ip)
+        record_rate_limit_event("send_code", ip, now)
         response = {
             "success": True,
             "message": "验证码已发送，有效期 10 分钟",

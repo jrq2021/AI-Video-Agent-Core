@@ -45,6 +45,21 @@ class AuthApiLimitsTest(unittest.TestCase):
         self.assertTrue(response["success"])
         record.assert_not_called()
 
+    def test_failed_code_delivery_does_not_consume_ip_rate_limit(self):
+        main = _load_main()
+        request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.5"))
+        payload = main.SendEmailCodeRequest(email="new@example.com", purpose="register")
+
+        with patch("main.is_rate_limited", return_value=False, create=True), patch(
+            "main.issue_email_code", side_effect=ValueError("smtp unavailable")
+        ), patch("main.record_rate_limit_event", create=True) as record:
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(main.send_auth_email_code(payload, request))
+
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assertEqual(caught.exception.detail, "smtp unavailable")
+        record.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

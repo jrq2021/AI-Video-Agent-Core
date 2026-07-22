@@ -153,7 +153,7 @@ def issue_email_code(
             raise ValueError("验证码发送太频繁，请稍后再试")
 
         generated_code = code or f"{secrets.randbelow(1_000_000):06d}"
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT INTO email_verification_codes
                 (email, purpose, code_hash, ip_address, created_at, expires_at)
@@ -168,9 +168,15 @@ def issue_email_code(
                 current + EMAIL_CODE_EXPIRE_SECONDS,
             ),
         )
+        code_id = cursor.lastrowid
 
     if deliver:
-        _send_email_code(normalized_email, normalized_purpose, generated_code)
+        try:
+            _send_email_code(normalized_email, normalized_purpose, generated_code)
+        except Exception:
+            with _get_db() as conn:
+                conn.execute("DELETE FROM email_verification_codes WHERE id=?", (code_id,))
+            raise
 
     result = {
         "email": normalized_email,
