@@ -72,6 +72,33 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
+        user_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "account_status" not in user_columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN account_status TEXT NOT NULL DEFAULT 'active'"
+            )
+        if "status_updated_at" not in user_columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN status_updated_at INTEGER NOT NULL DEFAULT 0"
+            )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS admin_audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actor_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                before_json TEXT NOT NULL DEFAULT '{}',
+                after_json TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER NOT NULL
+            )
+        """)
+        conn.execute(
+            "DELETE FROM admin_audit_logs WHERE created_at < ?",
+            (int(time.time()) - 90 * 24 * 60 * 60,),
+        )
 
 
 def _hash_password(password: str) -> str:
@@ -174,7 +201,7 @@ def authenticate_user(login: str, password: str) -> Optional[dict]:
         ).fetchone()
 
     verified, needs_upgrade = _verify_password(password, row["password_hash"]) if row else (False, False)
-    if not row or not verified:
+    if not row or not verified or row["account_status"] != "active":
         return None
 
     # 更新最后登录时间
@@ -192,7 +219,10 @@ def authenticate_user(login: str, password: str) -> Optional[dict]:
 
 def get_user_by_id(user_id: str) -> Optional[dict]:
     with _get_db() as conn:
-        row = conn.execute("SELECT id, username, email FROM users WHERE id=?", (user_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id, username, email, account_status, status_updated_at FROM users WHERE id=?",
+            (user_id,),
+        ).fetchone()
     return dict(row) if row else None
 
 
@@ -200,7 +230,7 @@ def get_user_by_email(email: str) -> Optional[dict]:
     email = email.strip().lower()
     with _get_db() as conn:
         row = conn.execute(
-            "SELECT id, username, email FROM users WHERE email=?",
+            "SELECT id, username, email, account_status, status_updated_at FROM users WHERE email=?",
             (email,),
         ).fetchone()
     return dict(row) if row else None
@@ -264,7 +294,72 @@ def get_current_user(request: Request) -> dict:
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
 
+    if user["account_status"] == "disabled":
+        raise HTTPException(status_code=403, detail="账号已禁用")
+    if user["account_status"] == "deleted":
+        raise HTTPException(status_code=403, detail="账号已删除")
+
     return user
+
+
+def get_current_admin(request: Request) -> dict:
+    user = get_current_user(request)
+    if user["email"].strip().lower() not in get_runtime_settings().admin_emails:
+        raise HTTPException(status_code=403, detail="管理员权限不足")
+    return user
+
+
+def record_admin_audit(
+    actor_id: str,
+    action: str,
+    target_type: str,
+    target_id: str,
+    before: dict,
+    after: dict,
+) -> None:
+    with _get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO admin_audit_logs
+                (actor_id, action, target_type, target_id, before_json, after_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                actor_id,
+                action,
+                target_type,
+                target_id,
+                json.dumps(before, ensure_ascii=False, sort_keys=True),
+                json.dumps(after, ensure_ascii=False, sort_keys=True),
+                int(time.time()),
+            ),
+        )
+
+
+def set_user_account_status(user_id: str, status: str, actor_id: str) -> dict:
+    allowed_statuses = {"active", "disabled", "deleted"}
+    if status not in allowed_statuses:
+        raise ValueError("账号状态不合法")
+    if user_id == actor_id:
+        raise ValueError("不能操作自己的账号")
+
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT id, username, email, account_status, status_updated_at FROM users WHERE id=?",
+            (user_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("用户不存在")
+        before = dict(row)
+        now = int(time.time())
+        conn.execute(
+            "UPDATE users SET account_status=?, status_updated_at=? WHERE id=?",
+            (status, now, user_id),
+        )
+        after = {**before, "account_status": status, "status_updated_at": now}
+
+    record_admin_audit(actor_id, "user.status.update", "user", user_id, before, after)
+    return after
 
 
 def get_optional_user(request: Request) -> Optional[dict]:
@@ -272,14 +367,7 @@ def get_optional_user(request: Request) -> Optional[dict]:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         return None
-    try:
-        token = auth[7:]
-        user_id = decode_token(token)
-        if user_id:
-            return get_user_by_id(user_id)
-    except Exception:
-        pass
-    return None
+    return get_current_user(request)
 
 
 # 启动时初始化数据库

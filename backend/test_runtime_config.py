@@ -20,7 +20,7 @@ class RuntimeConfigTest(unittest.TestCase):
         self.assertTrue(settings.email_code_secret)
 
     def test_production_requires_all_security_values(self):
-        with self.assertRaisesRegex(ConfigurationError, "JWT_SECRET.*SMTP_FROM"):
+        with self.assertRaisesRegex(ConfigurationError, "JWT_SECRET.*SMTP_FROM.*ADMIN_EMAILS"):
             load_runtime_settings({"APP_ENV": "production"})
 
     def test_production_parses_origins_and_limits(self):
@@ -32,6 +32,7 @@ class RuntimeConfigTest(unittest.TestCase):
                 "CORS_ALLOW_ORIGINS": "https://app.example, https://www.example",
                 "SMTP_HOST": "smtp.example",
                 "SMTP_FROM": "service@example",
+                "ADMIN_EMAILS": "Owner@example.com, second@example.com,owner@example.com",
                 "AUTH_RATE_LIMIT_WINDOW_SECONDS": "900",
                 "EMAIL_CODE_IP_MAX_REQUESTS": "10",
                 "LOGIN_IP_MAX_FAILURES": "10",
@@ -43,6 +44,7 @@ class RuntimeConfigTest(unittest.TestCase):
             ("https://app.example", "https://www.example"),
         )
         self.assertEqual(settings.rate_limit_window_seconds, 900)
+        self.assertEqual(settings.admin_emails, ("owner@example.com", "second@example.com"))
 
     def test_development_warning_is_emitted_at_validation_not_every_read(self):
         with patch.dict("os.environ", {"APP_ENV": "development"}, clear=True), warnings.catch_warnings(
@@ -64,6 +66,7 @@ class RuntimeConfigTest(unittest.TestCase):
             "JWT_SECRET",
             "EMAIL_CODE_SECRET",
             "CORS_ALLOW_ORIGINS",
+            "ADMIN_EMAILS",
             "AUTH_RATE_LIMIT_WINDOW_SECONDS",
         ):
             self.assertIn(key, template)

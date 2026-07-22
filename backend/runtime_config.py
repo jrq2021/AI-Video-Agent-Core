@@ -23,6 +23,7 @@ PRODUCTION_REQUIRED_KEYS = (
     "CORS_ALLOW_ORIGINS",
     "SMTP_HOST",
     "SMTP_FROM",
+    "ADMIN_EMAILS",
 )
 _DEV_JWT_SECRET = secrets.token_urlsafe(48)
 _DEV_EMAIL_CODE_SECRET = secrets.token_urlsafe(48)
@@ -38,6 +39,7 @@ class RuntimeSettings:
     jwt_secret: str
     email_code_secret: str
     cors_allow_origins: tuple[str, ...]
+    admin_emails: tuple[str, ...]
     rate_limit_window_seconds: int
     email_code_ip_max_requests: int
     login_ip_max_failures: int
@@ -76,6 +78,16 @@ def load_runtime_settings(environ: Optional[Mapping[str, str]] = None) -> Runtim
     if app_env == "production" and "*" in origins:
         raise ConfigurationError("生产环境 CORS_ALLOW_ORIGINS 不能包含 *")
 
+    admin_emails = tuple(
+        sorted(
+            {
+                value.strip().lower()
+                for value in _non_empty(env, "ADMIN_EMAILS").split(",")
+                if value.strip()
+            }
+        )
+    )
+
     jwt_secret = _non_empty(env, "JWT_SECRET") or _DEV_JWT_SECRET
     email_code_secret = _non_empty(env, "EMAIL_CODE_SECRET") or _DEV_EMAIL_CODE_SECRET
     return RuntimeSettings(
@@ -83,6 +95,7 @@ def load_runtime_settings(environ: Optional[Mapping[str, str]] = None) -> Runtim
         jwt_secret=jwt_secret,
         email_code_secret=email_code_secret,
         cors_allow_origins=origins,
+        admin_emails=admin_emails,
         rate_limit_window_seconds=_positive_int(env, "AUTH_RATE_LIMIT_WINDOW_SECONDS", 900),
         email_code_ip_max_requests=_positive_int(env, "EMAIL_CODE_IP_MAX_REQUESTS", 10),
         login_ip_max_failures=_positive_int(env, "LOGIN_IP_MAX_FAILURES", 10),
