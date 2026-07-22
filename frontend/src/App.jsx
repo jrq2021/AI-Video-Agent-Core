@@ -18,6 +18,7 @@ import ScrollExperience from "./components/ScrollExperience";
 import ProfilePage from "./components/ProfilePage";
 import ParsePage from "./components/ParsePage";
 import RedeemPage from "./components/RedeemPage";
+import AdminPage from "./components/AdminPage";
 import useQuota from "./hooks/useQuota";
 import {
   getPageFromPath,
@@ -273,6 +274,22 @@ export default function App() {
           isOpen={authOpen}
           onClose={() => setAuthOpen(false)}
           onLogin={handleLogin}
+        />
+      </div>
+    );
+  }
+
+  if (page === "admin") {
+    return (
+      <div className="site-shell min-h-screen">
+        <AdminPage
+          token={localStorage.getItem("auth_token") || ""}
+          currentUser={user}
+          onBackHome={() => navigateTo("home")}
+          onLogout={() => {
+            handleLogout();
+            navigateTo("home", { replace: true });
+          }}
         />
       </div>
     );
