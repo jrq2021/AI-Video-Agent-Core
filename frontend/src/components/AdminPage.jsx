@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, BarChart3, FileClock, LogOut, Ticket, UsersRound } from "lucide-react";
-import { buildUserQuery, downloadCouponCsv, requestAdmin } from "../services/adminApi";
+import { buildCouponQuery, buildUserQuery, downloadCouponCsv, requestAdmin } from "../services/adminApi";
 import AdminOverview from "./admin/AdminOverview";
 import AuditLogTable from "./admin/AuditLogTable";
 import CouponManager from "./admin/CouponManager";
@@ -22,19 +22,24 @@ export default function AdminPage({ token, currentUser, onBackHome, onLogout }) 
   const [audit, setAudit] = useState(null);
   const [filters, setFilters] = useState({ query: "", status: "all", plan: "all", page: 1 });
   const [couponStatus, setCouponStatus] = useState("all");
+  const [couponPage, setCouponPage] = useState(1);
   const [selectedUser, setSelectedUser] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [accessDenied, setAccessDenied] = useState(false);
 
-  const loadAll = async (nextFilters = filters, nextCouponStatus = couponStatus) => {
+  const loadAll = async (
+    nextFilters = filters,
+    nextCouponStatus = couponStatus,
+    nextCouponPage = couponPage,
+  ) => {
     if (!token) return;
     setLoading(true); setError("");
     try {
       const [overviewData, userData, couponData, auditData] = await Promise.all([
         requestAdmin("/overview", {}, token),
         requestAdmin(`/users${buildUserQuery(nextFilters)}`, {}, token),
-        requestAdmin(`/coupons?status=${encodeURIComponent(nextCouponStatus)}&page=1&page_size=20`, {}, token),
+        requestAdmin(`/coupons${buildCouponQuery({ status: nextCouponStatus, page: nextCouponPage })}`, {}, token),
         requestAdmin("/audit-logs?page=1&page_size=20", {}, token),
       ]);
       setOverview(overviewData); setUsers(userData); setCoupons(couponData); setAudit(auditData); setAccessDenied(false);
@@ -47,11 +52,21 @@ export default function AdminPage({ token, currentUser, onBackHome, onLogout }) 
   useEffect(() => { loadAll(); }, [token]);
 
   const updateUsers = async (nextFilters) => { const normalized = { ...nextFilters, page: nextFilters.page || 1 }; setFilters(normalized); await loadAll(normalized, couponStatus); };
-  const updateCoupons = async (nextStatus) => { setCouponStatus(nextStatus); await loadAll(filters, nextStatus); };
+  const updateCoupons = async (nextStatus) => { setCouponStatus(nextStatus); setCouponPage(1); await loadAll(filters, nextStatus, 1); };
+  const updateCouponPage = async (nextPage) => {
+    const normalizedPage = Math.max(1, Number(nextPage) || 1);
+    setCouponPage(normalizedPage);
+    await loadAll(filters, couponStatus, normalizedPage);
+  };
   const updateMembership = async (userId, payload) => { await requestAdmin(`/users/${encodeURIComponent(userId)}/membership`, { method: "PATCH", body: payload }, token); setSelectedUser(null); await loadAll(); };
   const updateStatus = async (userId, status) => { await requestAdmin(`/users/${encodeURIComponent(userId)}/status`, { method: "PATCH", body: { status } }, token); setSelectedUser(null); await loadAll(); };
-  const createCoupons = async (payload) => { const result = await requestAdmin("/coupons/batch", { method: "POST", body: payload }, token); await loadAll(); return result; };
-  const revokeCoupon = async (code) => { await requestAdmin(`/coupons/${encodeURIComponent(code)}/revoke`, { method: "POST" }, token); await loadAll(); };
+  const createCoupons = async (payload) => { const result = await requestAdmin("/coupons/batch", { method: "POST", body: payload }, token); await loadAll(filters, couponStatus, couponPage); return result; };
+  const revokeCoupon = async (code) => {
+    await requestAdmin(`/coupons/${encodeURIComponent(code)}/revoke`, { method: "POST" }, token);
+    const nextPage = coupons?.items?.length === 1 && couponPage > 1 ? couponPage - 1 : couponPage;
+    if (nextPage !== couponPage) setCouponPage(nextPage);
+    await loadAll(filters, couponStatus, nextPage);
+  };
 
   if (!token) return <main className="admin-guard"><h1>请先登录</h1><p>登录管理员账号后即可进入后台。</p><button type="button" onClick={onBackHome}>返回首页</button></main>;
   if (accessDenied) return <main className="admin-guard"><h1>无管理权限</h1><p>{error}</p><button type="button" onClick={onBackHome}>返回首页</button></main>;
@@ -59,7 +74,7 @@ export default function AdminPage({ token, currentUser, onBackHome, onLogout }) 
   return (
     <main className="admin-shell">
       <aside className="admin-sidebar"><button type="button" className="admin-brand" onClick={onBackHome}><span>JDNLAB</span><strong>运营后台</strong></button><nav aria-label="后台导航">{tabs.map(({ id, label, icon: Icon }) => <button type="button" className={tab === id ? "is-active" : ""} onClick={() => setTab(id)} key={id}><Icon aria-hidden="true" />{label}</button>)}</nav><div className="admin-sidebar__footer"><button type="button" onClick={onBackHome}><ArrowLeft aria-hidden="true" />返回网站</button><button type="button" onClick={onLogout}><LogOut aria-hidden="true" />退出登录</button></div></aside>
-      <section className="admin-main"><header className="admin-topbar"><div><span className="admin-eyebrow">ADMIN CONSOLE</span><h1>{tabs.find((item) => item.id === tab)?.label || "后台"}</h1></div><div className="admin-topbar__user"><span>{currentUser?.email || "已登录管理员"}</span><i /></div></header>{error ? <div className="admin-error" role="alert"><span>{error}</span><button type="button" onClick={() => loadAll()}>重试</button></div> : null}{loading && !overview ? <div className="admin-skeleton"><i /><i /><i /><i /></div> : null}{!loading || overview ? <div className="admin-content">{tab === "overview" ? <AdminOverview overview={overview} /> : null}{tab === "users" ? <UserTable users={users} filters={filters} onFiltersChange={setFilters} onSearch={(next) => updateUsers({ ...next, page: 1 })} onPage={(page) => updateUsers({ ...filters, page })} onSelect={setSelectedUser} loading={loading} /> : null}{tab === "coupons" ? <CouponManager coupons={coupons} onCreate={createCoupons} onRevoke={revokeCoupon} onExport={() => downloadCouponCsv(token, couponStatus)} onFilter={updateCoupons} loading={loading} /> : null}{tab === "audit" ? <AuditLogTable logs={audit} /> : null}</div> : null}</section>
+      <section className="admin-main"><header className="admin-topbar"><div><span className="admin-eyebrow">ADMIN CONSOLE</span><h1>{tabs.find((item) => item.id === tab)?.label || "后台"}</h1></div><div className="admin-topbar__user"><span>{currentUser?.email || "已登录管理员"}</span><i /></div></header>{error ? <div className="admin-error" role="alert"><span>{error}</span><button type="button" onClick={() => loadAll()}>重试</button></div> : null}{loading && !overview ? <div className="admin-skeleton"><i /><i /><i /><i /></div> : null}{!loading || overview ? <div className="admin-content">{tab === "overview" ? <AdminOverview overview={overview} /> : null}{tab === "users" ? <UserTable users={users} filters={filters} onFiltersChange={setFilters} onSearch={(next) => updateUsers({ ...next, page: 1 })} onPage={(page) => updateUsers({ ...filters, page })} onSelect={setSelectedUser} loading={loading} /> : null}{tab === "coupons" ? <CouponManager coupons={coupons} onCreate={createCoupons} onRevoke={revokeCoupon} onExport={() => downloadCouponCsv(token, couponStatus)} onFilter={updateCoupons} onPage={updateCouponPage} loading={loading} /> : null}{tab === "audit" ? <AuditLogTable logs={audit} /> : null}</div> : null}</section>
       <UserDetailDrawer user={selectedUser} currentUserId={currentUser?.id} onClose={() => setSelectedUser(null)} onMembership={updateMembership} onStatus={updateStatus} />
     </main>
   );
