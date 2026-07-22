@@ -557,6 +557,40 @@ def _membership_duration_days(plan: str, order_type: str) -> int:
     return 30
 
 
+_MEMBERSHIP_ORDER_TYPES = {"weekly", "monthly", "yearly", "lifetime"}
+_COUPON_STATUSES = {"active", "used", "revoked", "expired"}
+
+
+def set_admin_membership(user_id: str, plan: str, order_type: str = "monthly") -> Dict[str, Any]:
+    """Set a membership plan from the admin console and return its quota snapshot."""
+    if plan not in {"free", "pro", "ultra"}:
+        raise ValueError("管理员套餐必须是 free、pro 或 ultra")
+    if order_type not in _MEMBERSHIP_ORDER_TYPES:
+        raise ValueError("套餐类型必须是 weekly/monthly/yearly/lifetime")
+    if plan == "pro" and order_type == "lifetime":
+        raise ValueError("Pro 套餐不支持终身类型")
+
+    now = int(time.time())
+    if plan == "free":
+        expires_at = 0
+    elif plan == "ultra":
+        order_type = "lifetime"
+        expires_at = 0
+    else:
+        expires_at = now + _membership_duration_days(plan, order_type) * 86400
+
+    with _get_db() as conn:
+        _ensure_user_membership(conn, user_id)
+        conn.execute(
+            """UPDATE user_membership
+               SET plan=?, expires_at=?, updated_at=?
+               WHERE user_id=?""",
+            (plan, expires_at, now, user_id),
+        )
+
+    return asdict(get_user_quota(user_id))
+
+
 def _normalize_coupon_code(code: str) -> str:
     return "".join(str(code or "").upper().strip().split())
 
@@ -576,10 +610,34 @@ def create_membership_coupon(
     max_redemptions: int = 1,
 ) -> str:
     """Create a membership coupon and return the generated/normalized code."""
+    with _get_db() as conn:
+        return _create_membership_coupon_in_conn(
+            conn,
+            plan=plan,
+            order_type=order_type,
+            code=code,
+            expires_days=expires_days,
+            note=note,
+            max_redemptions=max_redemptions,
+        )
+
+
+def _create_membership_coupon_in_conn(
+    conn: sqlite3.Connection,
+    plan: str,
+    order_type: str = "monthly",
+    code: str = "",
+    expires_days: int = 0,
+    note: str = "",
+    max_redemptions: int = 1,
+) -> str:
+    """Insert one coupon using a caller-owned transaction connection."""
     if plan not in ("pro", "ultra"):
         raise ValueError("券码套餐必须是 pro 或 ultra")
-    if order_type not in ("weekly", "monthly", "yearly", "lifetime"):
-        raise ValueError("券码类型必须是 monthly/yearly/lifetime")
+    if order_type not in _MEMBERSHIP_ORDER_TYPES:
+        raise ValueError("券码类型必须是 weekly/monthly/yearly/lifetime")
+    if expires_days < 0:
+        raise ValueError("券码有效期不能为负数")
     if plan == "ultra":
         order_type = "lifetime"
 
@@ -588,23 +646,92 @@ def create_membership_coupon(
     max_redemptions = max(1, int(max_redemptions or 1))
     normalized_code = _normalize_coupon_code(code) if code else generate_coupon_code()
 
-    with _get_db() as conn:
-        conn.execute(
-            """INSERT INTO coupon_codes
-               (code, plan, order_type, status, max_redemptions, redeemed_count,
-                expires_at, note, created_at)
-               VALUES (?, ?, ?, 'active', ?, 0, ?, ?, ?)""",
-            (
-                normalized_code,
-                plan,
-                order_type,
-                max_redemptions,
-                expires_at,
-                note,
-                now,
-            )
-        )
+    conn.execute(
+        """INSERT INTO coupon_codes
+           (code, plan, order_type, status, max_redemptions, redeemed_count,
+            expires_at, note, created_at)
+           VALUES (?, ?, ?, 'active', ?, 0, ?, ?, ?)""",
+        (
+            normalized_code,
+            plan,
+            order_type,
+            max_redemptions,
+            expires_at,
+            note,
+            now,
+        ),
+    )
     return normalized_code
+
+
+def _expire_coupons(conn: sqlite3.Connection, now: int) -> None:
+    conn.execute(
+        """UPDATE coupon_codes
+           SET status='expired'
+           WHERE status='active' AND expires_at > 0 AND expires_at < ?""",
+        (now,),
+    )
+
+
+def list_membership_coupons(
+    status: str = "all", offset: int = 0, limit: int = 20
+) -> tuple[list[Dict[str, Any]], int]:
+    """List coupons for administration without exposing write access."""
+    if status != "all" and status not in _COUPON_STATUSES:
+        raise ValueError("卡券状态不合法")
+    offset = max(0, int(offset))
+    limit = max(1, min(int(limit), 100))
+
+    with _get_db() as conn:
+        _expire_coupons(conn, int(time.time()))
+        if status == "all":
+            total = conn.execute("SELECT COUNT(*) FROM coupon_codes").fetchone()[0]
+            rows = conn.execute(
+                "SELECT * FROM coupon_codes ORDER BY created_at DESC, code ASC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        else:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM coupon_codes WHERE status=?", (status,)
+            ).fetchone()[0]
+            rows = conn.execute(
+                """SELECT * FROM coupon_codes WHERE status=?
+                   ORDER BY created_at DESC, code ASC LIMIT ? OFFSET ?""",
+                (status, limit, offset),
+            ).fetchall()
+
+    items = []
+    for row in rows:
+        item = dict(row)
+        item["remaining_redemptions"] = max(0, item["max_redemptions"] - item["redeemed_count"])
+        items.append(item)
+    return items, total
+
+
+def revoke_membership_coupon(code: str) -> Dict[str, Any]:
+    """Revoke an unused active coupon while preserving redemption history."""
+    normalized_code = _normalize_coupon_code(code)
+    if not normalized_code:
+        raise ValueError("请提供券码")
+
+    with _get_db() as conn:
+        _expire_coupons(conn, int(time.time()))
+        row = conn.execute(
+            "SELECT * FROM coupon_codes WHERE code=?", (normalized_code,)
+        ).fetchone()
+        if not row:
+            raise ValueError("券码不存在")
+        if row["status"] != "active":
+            raise ValueError("当前卡券无法撤销")
+        conn.execute(
+            "UPDATE coupon_codes SET status='revoked' WHERE code=?", (normalized_code,)
+        )
+        result = dict(row)
+        result["status"] = "revoked"
+        result["remaining_redemptions"] = max(
+            0, result["max_redemptions"] - result["redeemed_count"]
+        )
+    return result
 
 
 def redeem_membership_coupon(user_id: str, code: str) -> Dict[str, Any]:
