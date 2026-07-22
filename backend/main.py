@@ -7,13 +7,15 @@ import json
 import asyncio
 import time
 import uuid
+import csv
+import io
 import queue as std_queue
 import urllib.request
 from urllib.parse import urlparse
 from decimal import Decimal
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
@@ -28,9 +30,12 @@ from auth import (
     create_token,
     ensure_registration_available,
     get_current_user,
+    get_current_admin,
     get_optional_user,
     get_user_by_id,
     init_db,
+    record_admin_audit,
+    set_user_account_status,
     validate_registration_input,
 )
 from email_verification import (
@@ -44,7 +49,10 @@ from membership import (
     create_order, mark_order_paid, QuotaInfo, init_membership_db,
     get_guest_quota, check_and_consume_guest_quota, get_order,
     update_order_gateway_data, redeem_membership_coupon, refund_quota_once,
+    set_admin_membership, list_membership_coupons, revoke_membership_coupon,
 )
+import admin_service
+import membership as membership_service
 from parse_history import init_parse_history_db, parse_history_store
 from batch_jobs import BatchProcessor, batch_job_store, init_batch_jobs_db
 from creator_tools import ALLOWED_TARGET_LANGUAGES, create_creator_pack, translate_segments
@@ -184,6 +192,24 @@ class CreatorPackRequest(BaseModel):
     record_key: str
 
 
+class AdminMembershipRequest(BaseModel):
+    plan: Literal["free", "pro", "ultra"]
+    order_type: Literal["weekly", "monthly", "yearly", "lifetime"] = "monthly"
+
+
+class AdminUserStatusRequest(BaseModel):
+    status: Literal["active", "disabled", "deleted"]
+
+
+class AdminCouponBatchRequest(BaseModel):
+    plan: Literal["pro", "ultra"]
+    order_type: Literal["weekly", "monthly", "yearly", "lifetime"] = "monthly"
+    count: int = Field(ge=1, le=100)
+    expires_days: int = Field(default=0, ge=0, le=3650)
+    note: str = Field(default="", max_length=120)
+    max_redemptions: int = Field(default=1, ge=1, le=100)
+
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "message": "万能视频下载器运行中"}
@@ -275,6 +301,194 @@ async def me(user: dict = Depends(get_current_user)):
     user["plan"] = quota.plan
     user["quota"] = serialize_quota(quota)
     return {"success": True, "user": user}
+
+
+# ==================== 后台管理 API ====================
+
+def _require_other_user(target_user_id: str, current_user: dict) -> None:
+    if target_user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="不能操作自己的账号")
+
+
+@app.get("/api/admin/overview")
+async def admin_overview(user: dict = Depends(get_current_admin)):
+    return {"success": True, **admin_service.get_overview()}
+
+
+@app.get("/api/admin/users")
+async def admin_list_users(
+    query: str = Query("", max_length=120),
+    status: str = Query("all"),
+    plan: str = Query("all"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    user: dict = Depends(get_current_admin),
+):
+    try:
+        return {"success": True, **admin_service.list_users(query, status, plan, page, page_size)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/admin/users/{user_id}")
+async def admin_get_user_detail(user_id: str, user: dict = Depends(get_current_admin)):
+    detail = admin_service.get_user_detail(user_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return {"success": True, "user": detail}
+
+
+@app.patch("/api/admin/users/{user_id}/membership")
+async def admin_update_user_membership(
+    user_id: str,
+    req: AdminMembershipRequest,
+    user: dict = Depends(get_current_admin),
+):
+    _require_other_user(user_id, user)
+    before = admin_service.get_user_detail(user_id)
+    if not before:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    try:
+        quota = set_admin_membership(user_id, req.plan, req.order_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    after = admin_service.get_user_detail(user_id)
+    record_admin_audit(
+        user["id"],
+        "user.membership.update",
+        "user",
+        user_id,
+        {"plan": before["plan"], "expires_at": before["expires_at"]},
+        {"plan": after["plan"], "expires_at": after["expires_at"], "order_type": req.order_type},
+    )
+    return {"success": True, "user": after, "quota": quota}
+
+
+@app.patch("/api/admin/users/{user_id}/status")
+async def admin_update_user_status(
+    user_id: str,
+    req: AdminUserStatusRequest,
+    user: dict = Depends(get_current_admin),
+):
+    _require_other_user(user_id, user)
+    try:
+        result = set_user_account_status(user_id, req.status, user["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"success": True, "user": result}
+
+
+@app.get("/api/admin/coupons")
+async def admin_list_coupons(
+    status: str = Query("all"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    user: dict = Depends(get_current_admin),
+):
+    try:
+        items, total = list_membership_coupons(status, (page - 1) * page_size, page_size)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"success": True, "items": items, "page": page, "page_size": page_size, "total": total}
+
+
+@app.post("/api/admin/coupons/batch")
+async def admin_create_coupons(
+    req: AdminCouponBatchRequest,
+    user: dict = Depends(get_current_admin),
+):
+    try:
+        with membership_service._get_db() as conn:
+            codes = [
+                membership_service._create_membership_coupon_in_conn(
+                    conn,
+                    plan=req.plan,
+                    order_type=req.order_type,
+                    expires_days=req.expires_days,
+                    note=req.note.strip(),
+                    max_redemptions=req.max_redemptions,
+                )
+                for _ in range(req.count)
+            ]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"卡券生成失败：{exc}")
+
+    record_admin_audit(
+        user["id"],
+        "coupon.batch.create",
+        "coupon_batch",
+        codes[0],
+        {},
+        {
+            "count": len(codes),
+            "plan": req.plan,
+            "order_type": req.order_type,
+            "expires_days": req.expires_days,
+            "max_redemptions": req.max_redemptions,
+            "note": req.note.strip(),
+        },
+    )
+    return {"success": True, "coupons": codes}
+
+
+@app.post("/api/admin/coupons/{code}/revoke")
+async def admin_revoke_coupon(code: str, user: dict = Depends(get_current_admin)):
+    try:
+        before = next(
+            (item for item in list_membership_coupons("all", 0, 100)[0] if item["code"] == code.upper()),
+            None,
+        )
+        coupon = revoke_membership_coupon(code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    record_admin_audit(
+        user["id"],
+        "coupon.revoke",
+        "coupon",
+        coupon["code"],
+        {"status": before["status"]} if before else {},
+        {"status": coupon["status"]},
+    )
+    return {"success": True, "coupon": coupon}
+
+
+@app.get("/api/admin/coupons/export")
+async def admin_export_coupons(status: str = Query("all"), user: dict = Depends(get_current_admin)):
+    try:
+        items = []
+        offset = 0
+        while True:
+            batch, total = list_membership_coupons(status, offset, 100)
+            items.extend(batch)
+            offset += len(batch)
+            if offset >= total or not batch:
+                break
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    output = io.StringIO(newline="")
+    fields = [
+        "code", "plan", "order_type", "status", "max_redemptions", "redeemed_count",
+        "redeemed_by", "redeemed_at", "expires_at", "note", "created_at",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(items)
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="coupons.csv"'},
+    )
+
+
+@app.get("/api/admin/audit-logs")
+async def admin_list_audit_logs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    user: dict = Depends(get_current_admin),
+):
+    return {"success": True, **admin_service.list_audit_logs(page, page_size)}
 
 
 # ==================== 会员套餐 API ====================

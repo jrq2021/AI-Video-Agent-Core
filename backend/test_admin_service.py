@@ -76,6 +76,10 @@ class AdminServiceTest(unittest.TestCase):
         self.assertEqual(quota["plan"], "free")
         self.assertEqual(quota["expires_at"], 0)
 
+    def test_pro_coupon_cannot_use_lifetime_order_type(self):
+        with self.assertRaisesRegex(ValueError, "Pro.*终身"):
+            membership.create_membership_coupon("pro", "lifetime")
+
 
 if __name__ == "__main__":
     unittest.main()

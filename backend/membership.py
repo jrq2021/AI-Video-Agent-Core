@@ -636,6 +636,8 @@ def _create_membership_coupon_in_conn(
         raise ValueError("券码套餐必须是 pro 或 ultra")
     if order_type not in _MEMBERSHIP_ORDER_TYPES:
         raise ValueError("券码类型必须是 weekly/monthly/yearly/lifetime")
+    if plan == "pro" and order_type == "lifetime":
+        raise ValueError("Pro 券码不支持终身类型")
     if expires_days < 0:
         raise ValueError("券码有效期不能为负数")
     if plan == "ultra":
