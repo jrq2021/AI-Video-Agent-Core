@@ -1,11 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildCouponQuery,
   buildTrendPoints,
   buildUserQuery,
   requestAdmin,
   validateCouponBatch,
 } from "./adminApi.js";
+
+test("buildCouponQuery preserves status and normalizes the page", () => {
+  assert.equal(
+    buildCouponQuery({ status: "active", page: 3 }),
+    "?status=active&page=3&page_size=20",
+  );
+  assert.equal(
+    buildCouponQuery({ status: "all", page: 0 }),
+    "?status=all&page=1&page_size=20",
+  );
+});
 
 test("admin request forwards bearer token and surfaces API detail", async () => {
   let received = null;

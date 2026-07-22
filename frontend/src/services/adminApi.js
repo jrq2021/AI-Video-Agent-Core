@@ -21,6 +21,11 @@ export function buildUserQuery({ query = "", status = "all", plan = "all", page 
   return `?${params.toString()}`;
 }
 
+export function buildCouponQuery({ status = "all", page = 1 } = {}) {
+  const normalizedPage = Math.max(1, Number(page) || 1);
+  return `?status=${encodeURIComponent(status)}&page=${normalizedPage}&page_size=20`;
+}
+
 export function validateCouponBatch(values = {}) {
   const errors = {};
   const count = Number(values.count);
