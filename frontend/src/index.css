@@ -3922,6 +3922,19 @@
 .admin-created-codes header button { display: inline-flex; align-items: center; gap: 0.3rem; }
 .admin-created-codes header svg { width: 0.8rem; height: 0.8rem; }
 .admin-created-codes textarea { display: block; width: 100%; min-height: 8rem; border: 0; border-top: 1px solid rgba(161, 228, 232, 0.12); outline: 0; background: rgba(0, 15, 21, 0.38); color: #bceef1; padding: 0.75rem; font: 0.72rem/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.admin-coupon-warning { margin: -0.35rem 0 0.9rem; color: #ffe0a0; font-size: 0.72rem; line-height: 1.55; }
+.admin-created-codes__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.45rem; }
+.admin-created-coupon-list { display: grid; gap: 0.75rem; padding: 0.75rem; border-top: 1px solid rgba(161, 228, 232, 0.12); }
+.admin-created-coupon { overflow: hidden; border: 1px solid rgba(161, 228, 232, 0.12); border-radius: 0.7rem; background: rgba(0, 15, 21, 0.2); }
+.admin-created-coupon > header { align-items: flex-start; padding: 0.65rem 0.72rem; }
+.admin-created-coupon > header > div { display: grid; gap: 0.16rem; min-width: 0; }
+.admin-created-coupon > header strong { color: #eaffff; font: 0.8rem/1.25 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.admin-created-coupon > header small { color: rgba(205, 240, 242, 0.56); font-size: 0.7rem; }
+.admin-created-coupon > header button { flex: 0 0 auto; }
+.admin-created-coupon textarea { min-height: 14rem; border-top: 1px solid rgba(161, 228, 232, 0.12); }
+.admin-coupon-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.45rem; }
+.admin-coupon-actions .admin-link-button { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.2rem 0; white-space: nowrap; }
+.admin-coupon-actions .admin-link-button svg { width: 0.8rem; height: 0.8rem; }
 .admin-inline-message { color: #b9f5d0; font-size: 0.76rem; }
 .admin-coupon-toolbar { margin: 1rem 0; color: rgba(217, 246, 247, 0.48); font-size: 0.74rem; }
 .admin-export-button { background: rgba(77, 177, 187, 0.12); color: #bceff1; }
@@ -3970,5 +3983,5 @@
 
 @media (max-width: 1000px) { .admin-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-coupon-layout { grid-template-columns: 1fr; } }
 @media (max-width: 860px) { .admin-shell { grid-template-columns: 1fr; } .admin-sidebar { position: static; min-height: auto; padding: 0.75rem; border-right: 0; border-bottom: 1px solid rgba(171, 231, 235, 0.12); } .admin-brand { display: inline-grid; width: auto; padding: 0.4rem 0.55rem; } .admin-sidebar nav { display: flex; overflow-x: auto; gap: 0.3rem; margin-top: 0.65rem; } .admin-sidebar nav button { width: auto; white-space: nowrap; } .admin-sidebar__footer { display: flex; margin-top: 0.65rem; } .admin-sidebar__footer button { width: auto; } }
-@media (max-width: 640px) { .admin-main { padding: 1rem; } .admin-topbar__user { display: none; } .admin-metric-grid, .admin-visual-grid, .admin-form-grid, .admin-detail-list { grid-template-columns: 1fr; } .admin-filter-row { grid-template-columns: 1fr 1fr; } .admin-filter-row input { grid-column: span 2; } .admin-filter-row button { grid-column: span 2; } .admin-panel { border-radius: 1rem; padding: 0.9rem; } .admin-drawer { width: 100%; padding: 1rem; } .admin-skeleton { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 640px) { .admin-main { padding: 1rem; } .admin-topbar__user { display: none; } .admin-metric-grid, .admin-visual-grid, .admin-form-grid, .admin-detail-list { grid-template-columns: 1fr; } .admin-filter-row { grid-template-columns: 1fr 1fr; } .admin-filter-row input { grid-column: span 2; } .admin-filter-row button { grid-column: span 2; } .admin-panel { border-radius: 1rem; padding: 0.9rem; } .admin-drawer { width: 100%; padding: 1rem; } .admin-skeleton { grid-template-columns: 1fr 1fr; } .admin-created-codes header { align-items: flex-start; flex-direction: column; } .admin-created-codes__actions { justify-content: flex-start; } .admin-created-coupon > header { align-items: stretch; flex-direction: column; } .admin-created-coupon > header button { align-self: flex-start; } }
 @media (prefers-reduced-motion: reduce) { .admin-skeleton i { animation: none; } .admin-sidebar nav button, .admin-sidebar__footer button, .admin-primary-button, .admin-filter-row button, .admin-export-button { transition: none; } }
