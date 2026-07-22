@@ -28,3 +28,7 @@ export function getPathForPage(page) {
 export function isHomeSection(sectionId) {
   return HOME_SECTION_IDS.has(sectionId);
 }
+
+export function shouldPreserveScrollForHistoryOpen(page) {
+  return page === "parse";
+}

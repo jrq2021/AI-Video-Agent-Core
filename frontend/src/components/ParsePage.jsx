@@ -25,12 +25,12 @@ export default function ParsePage({
   return (
     <main className="parse-page cinematic-content" aria-label="视频解析工作台">
       <section className="workspace-stage">
-        <div className="mx-auto max-w-5xl px-4 py-24 sm:px-6 md:py-32">
-          <header className="section-heading mb-12 text-center">
+        <div className="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-14 md:py-16">
+          <header className="section-heading mb-6 text-center">
             <p className="section-kicker">VIDEO WORKSPACE</p>
-            <h1 className="workspace-title">带来链接，留住此刻。</h1>
-            <p className="mx-auto mt-5 max-w-2xl text-sm leading-7 text-dark-500 sm:text-base">
-              粘贴任意支持平台的视频链接，解析高清画质、音频与字幕，把灵感安静地保存下来。
+            <h1 className="workspace-title workspace-title--compact">带来链接，留住此刻。</h1>
+            <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-dark-500">
+              粘贴视频链接，快速解析画质、音频与字幕。
             </p>
           </header>
 

@@ -1382,6 +1382,11 @@
   line-height: 0.98;
 }
 
+.workspace-title--compact {
+  font-size: clamp(1.625rem, 2.5vw, 1.875rem);
+  line-height: 1.16;
+}
+
 .video-input-panel {
   border-radius: 1.75rem;
   padding: clamp(1rem, 3vw, 1.5rem);

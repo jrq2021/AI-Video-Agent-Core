@@ -4,6 +4,7 @@ import {
   getPageFromPath,
   getPathForPage,
   isHomeSection,
+  shouldPreserveScrollForHistoryOpen,
 } from "./appNavigation.js";
 
 test("maps parse and profile paths while unknown paths fall back home", () => {
@@ -22,4 +23,9 @@ test("builds stable page paths and recognises homepage anchors", () => {
   assert.equal(getPathForPage("home"), "/");
   assert.equal(isHomeSection("features"), true);
   assert.equal(isHomeSection("download-workspace"), false);
+});
+
+test("only history opened inside parse page preserves window scroll", () => {
+  assert.equal(shouldPreserveScrollForHistoryOpen("parse"), true);
+  assert.equal(shouldPreserveScrollForHistoryOpen("profile"), false);
 });

@@ -15,6 +15,10 @@ function toClock(seconds) {
   return toTimestamp(seconds, ".").slice(0, -4);
 }
 
+export function getCreatorTargetLanguage(artifacts = {}) {
+  return artifacts?.translation_language || "zh-CN";
+}
+
 export function buildBilingualSrt(segments = []) {
   return segments
     .map(

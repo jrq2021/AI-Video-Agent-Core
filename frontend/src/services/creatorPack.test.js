@@ -4,6 +4,7 @@ import {
   buildBilingualSrt,
   buildBilingualVtt,
   buildCreatorPackMarkdown,
+  getCreatorTargetLanguage,
 } from "./creatorPack.js";
 
 test("builds bilingual subtitles without modifying original timestamps", () => {
@@ -29,4 +30,9 @@ test("creator pack Markdown contains every customer-facing section", () => {
 
   assert.match(markdown, /## 小红书笔记/);
   assert.match(markdown, /## 高光时间点/);
+});
+
+test("creator tools default to Simplified Chinese and restore saved language", () => {
+  assert.equal(getCreatorTargetLanguage(), "zh-CN");
+  assert.equal(getCreatorTargetLanguage({ translation_language: "en" }), "en");
 });

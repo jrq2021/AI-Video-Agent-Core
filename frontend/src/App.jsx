@@ -24,6 +24,7 @@ import {
   getPageFromPath,
   getPathForPage,
   isHomeSection,
+  shouldPreserveScrollForHistoryOpen,
 } from "./services/appNavigation";
 
 export default function App() {
@@ -130,7 +131,11 @@ export default function App() {
     scroller.scrollTo({ top, behavior });
   }, []);
 
-  const navigateTo = useCallback((nextPage, { replace = false, sectionId } = {}) => {
+  const navigateTo = useCallback((nextPage, {
+    replace = false,
+    sectionId,
+    preserveScroll = false,
+  } = {}) => {
     const path = getPathForPage(nextPage);
     const method = replace ? "replaceState" : "pushState";
     if (window.location.pathname !== path) {
@@ -138,6 +143,7 @@ export default function App() {
     }
     setPage(nextPage);
     window.requestAnimationFrame(() => {
+      if (preserveScroll) return;
       if (nextPage === "home") {
         scrollHomeTo(
           isHomeSection(sectionId) ? sectionId : "home",
@@ -218,12 +224,14 @@ export default function App() {
       const sourceUrl = item.webpage_url || item.url;
       if (!sourceUrl) return;
 
-      navigateTo("parse");
+      navigateTo("parse", {
+        preserveScroll: shouldPreserveScrollForHistoryOpen(page),
+      });
       window.requestAnimationFrame(() => {
         handleAnalyze(sourceUrl, item);
       });
     },
-    [handleAnalyze, navigateTo],
+    [handleAnalyze, navigateTo, page],
   );
 
   const handleArtifactsChange = useCallback(

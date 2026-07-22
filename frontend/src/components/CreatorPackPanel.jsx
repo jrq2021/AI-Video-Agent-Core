@@ -4,6 +4,7 @@ import {
   buildBilingualSrt,
   buildBilingualVtt,
   buildCreatorPackMarkdown,
+  getCreatorTargetLanguage,
 } from "../services/creatorPack";
 
 function downloadText(text, filename, type = "text/plain;charset=utf-8") {
@@ -36,7 +37,7 @@ export default function CreatorPackPanel({
   onAuthClick,
   consumeQuota,
 }) {
-  const [targetLanguage, setTargetLanguage] = useState("en");
+  const [targetLanguage, setTargetLanguage] = useState("zh-CN");
   const [translatedSegments, setTranslatedSegments] = useState([]);
   const [translationState, setTranslationState] = useState("idle");
   const [pack, setPack] = useState({});
@@ -48,7 +49,7 @@ export default function CreatorPackPanel({
   const resolvedSubtitles = String(subtitles || "");
 
   useEffect(() => {
-    const nextLanguage = artifacts?.translation_language || "en";
+    const nextLanguage = getCreatorTargetLanguage(artifacts);
     setTargetLanguage(nextLanguage);
     setTranslatedSegments(Array.isArray(artifacts?.translated_segments) ? artifacts.translated_segments : []);
     setPack(artifacts?.creator_pack || {});
